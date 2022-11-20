@@ -3,11 +3,8 @@
 mod logging;
 mod ui;
 
-use color_eyre::{eyre::Context, Report, Result};
-use egui::Ui;
-use rfd::FileDialog;
-use std::{net::UdpSocket, path::PathBuf};
-use tracing::info;
+use color_eyre::Result;
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
     logging::initialize()?;

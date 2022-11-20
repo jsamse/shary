@@ -1,6 +1,6 @@
 use super::Send;
 use color_eyre::eyre::WrapErr;
-use color_eyre::{Report, Result};
+use color_eyre::Result;
 use rfd::FileDialog;
 use std::{net::UdpSocket, path::PathBuf};
 use tracing::info;
