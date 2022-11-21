@@ -1,3 +1,5 @@
+use crate::network::Network;
+
 use super::Send;
 use color_eyre::eyre::WrapErr;
 use color_eyre::Result;
@@ -39,14 +41,12 @@ impl eframe::App for App {
 impl App {
     fn new(key: String) -> Self {
         fn initialize(key: String) -> Result<InitializedApp> {
-            let socket =
-                UdpSocket::bind("0.0.0.0:0").wrap_err("failed to bind broadcast socket")?;
-            socket.set_broadcast(true)?;
+            let network = Network::new()?;
             Ok(InitializedApp {
                 key,
                 actions: vec![],
                 sends: vec![],
-                socket,
+                network,
             })
         }
 
@@ -60,7 +60,7 @@ struct InitializedApp {
     key: String,
     actions: Vec<Action>,
     sends: Vec<Send>,
-    socket: UdpSocket,
+    network: Network,
 }
 
 impl InitializedApp {
@@ -115,12 +115,14 @@ impl InitializedApp {
             info!("Path already shared: {}", path.to_str().unwrap_or_default());
             return;
         }
+        self.network.add_send(&path);
         let send = Send { path };
         self.sends.push(send);
     }
 
     fn remove_send(&mut self, path: &str) {
         let path = PathBuf::from(path);
+        self.network.remove_send(&path);
         self.sends.retain(|s| s.path != path);
     }
 }
