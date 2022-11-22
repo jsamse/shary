@@ -12,12 +12,17 @@ opt-level = 2 # fast and small wasm
 opt-level = 2
 
 [dependencies]
+clap = { version = "4.0.26", features = ["derive"] }
 color-eyre = "0.6"
+const-str = { version = "0.5", features = ["std"] }
 crossbeam-channel = "0.5"
 eframe = { version = "0.19.0", features = ["persistence"] }
 egui = "0.19"
+lazy_static = "1.4.0"
 network-interface = "0.1"
 random-string = "1.0"
 rfd = "0.10"
+serde = "1.0"
+serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.2.0"

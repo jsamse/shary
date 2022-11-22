@@ -7,10 +7,10 @@ use rfd::FileDialog;
 use std::{net::UdpSocket, path::PathBuf};
 use tracing::info;
 
-pub fn run(key: String) {
+pub fn run(key: String, port: u16) {
     let options = eframe::NativeOptions::default();
     let name = format!("Shary {}", &key);
-    let app = App::new(key);
+    let app = App::new(key, port);
     eframe::run_native(&name, options, Box::new(|_cc| Box::new(app)));
 }
 
@@ -39,20 +39,15 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn new(key: String) -> Self {
-        fn initialize(key: String) -> Result<InitializedApp> {
-            let network = Network::new()?;
-            Ok(InitializedApp {
-                key,
-                actions: vec![],
-                sends: vec![],
-                network,
-            })
-        }
+    fn new(key: String, port: u16) -> Self {
+        let initialized = Network::new(port).map(|network| InitializedApp {
+            key,
+            actions: vec![],
+            sends: vec![],
+            network,
+        });
 
-        Self {
-            initialized: initialize(key),
-        }
+        Self { initialized }
     }
 }
 

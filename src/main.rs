@@ -4,13 +4,23 @@ mod logging;
 mod network;
 mod ui;
 
+use clap::Parser;
 use color_eyre::Result;
 use std::path::PathBuf;
+use tracing::{event, field, info, instrument, Level};
+
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(short, long, default_value_t = 17671)]
+    port: u16,
+}
 
 fn main() -> Result<()> {
     logging::initialize()?;
+    let args = Args::parse();
+    event!(Level::INFO, ?args);
     let key = random_string::generate(6, "ABCDEFGHIJKLMNOPQRSTUVXYZ");
-    ui::run(key);
+    ui::run(key, args.port);
     Ok(())
 }
 
