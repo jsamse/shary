@@ -1,4 +1,4 @@
-use crate::network::Network;
+use crate::{network::Network, common::Key};
 
 use super::Send;
 use color_eyre::eyre::WrapErr;
@@ -7,9 +7,9 @@ use rfd::FileDialog;
 use std::{net::UdpSocket, path::PathBuf};
 use tracing::info;
 
-pub fn run(key: String, port: u16) {
+pub fn run(key: Key, port: u16) {
     let options = eframe::NativeOptions::default();
-    let name = format!("Shary {}", &key);
+    let name = format!("Shary {}", key.as_str());
     let app = App::new(key, port);
     eframe::run_native(&name, options, Box::new(|_cc| Box::new(app)));
 }
@@ -39,7 +39,7 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn new(key: String, port: u16) -> Self {
+    fn new(key: Key, port: u16) -> Self {
         let initialized = Network::new(port).map(|network| InitializedApp {
             key,
             actions: vec![],
@@ -52,7 +52,7 @@ impl App {
 }
 
 struct InitializedApp {
-    key: String,
+    key: Key,
     actions: Vec<Action>,
     sends: Vec<Send>,
     network: Network,

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod common;
 mod logging;
 mod network;
 mod ui;
@@ -9,18 +10,22 @@ use color_eyre::Result;
 use std::path::PathBuf;
 use tracing::{event, field, info, instrument, Level};
 
+use crate::common::Key;
+
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(short, long, default_value_t = 17671)]
-    port: u16,
+    discovery_port: u16,
+    #[arg(short, long, default_value_t = 17672)]
+    transfer_port: u16,
 }
 
 fn main() -> Result<()> {
     logging::initialize()?;
     let args = Args::parse();
     event!(Level::INFO, ?args);
-    let key = random_string::generate(6, "ABCDEFGHIJKLMNOPQRSTUVXYZ");
-    ui::run(key, args.port);
+    let key = Key::new();
+    ui::run(key, args.discovery_port);
     Ok(())
 }
 
