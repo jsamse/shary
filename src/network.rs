@@ -8,9 +8,8 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use lazy_static::lazy_static;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
-use tokio::io::Interest;
 use std::future::Future;
-use std::io::{Write, Read};
+use std::io::{Read, Write};
 use std::net::SocketAddrV4;
 use std::{
     ffi::{OsStr, OsString},
@@ -18,6 +17,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::io::Interest;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -56,7 +56,11 @@ pub fn run(key: Key, port: u16) -> NetworkHandle {
             .expect("failed to send failed status");
     });
 
-    NetworkHandle { runtime, status: status_rx, local_files: local_file_tx }
+    NetworkHandle {
+        runtime,
+        status: status_rx,
+        local_files: local_file_tx,
+    }
 }
 
 pub struct NetworkHandle {
@@ -99,6 +103,7 @@ impl Network {
 
         let discovery_send_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
         let discovery_send_socket = UdpSocket::bind(discovery_send_addr).await?;
+        discovery_send_socket.set_multicast_loop_v4(false)?;
         discovery_send_socket
             .connect(SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port))
             .await?;
@@ -108,7 +113,10 @@ impl Network {
         let send_handle = tokio::spawn(async move {
             loop {
                 let files = vec![];
-                let packet = DiscoveryPacket { key: key.clone(), files };
+                let packet = DiscoveryPacket {
+                    key: key.clone(),
+                    files,
+                };
                 let buf = serde_json::to_string(&packet).unwrap();
                 discovery_send_socket.send(buf.as_bytes()).await.unwrap();
                 info!("Sent: {buf}");
@@ -120,7 +128,13 @@ impl Network {
             loop {
                 let mut buf = BytesMut::with_capacity(4096);
                 discovery_recv_socket.readable().await.unwrap();
-                let (_, addr) = discovery_recv_socket.try_recv_buf_from(&mut buf).unwrap();
+                let result = discovery_recv_socket.try_recv_buf_from(&mut buf);
+                if let Err(err) = &result {
+                    if err.kind() == std::io::ErrorKind::WouldBlock {
+                        continue;
+                    }
+                }
+                let (_, addr) = result.unwrap();
                 let data = String::from_utf8(buf.to_vec()).unwrap();
                 info!("Received from {addr}: {data}");
             }
