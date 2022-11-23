@@ -108,21 +108,10 @@ impl Network {
             .connect(SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port))
             .await?;
 
-        let key = self.key.clone();
 
-        let send_handle = tokio::spawn(async move {
-            loop {
-                let files = vec![];
-                let packet = DiscoveryPacket {
-                    key: key.clone(),
-                    files,
-                };
-                let buf = serde_json::to_string(&packet).unwrap();
-                discovery_send_socket.send(buf.as_bytes()).await.unwrap();
-                info!("Sent: {buf}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        });
+        let (_files_tx, files_rx) = watch::channel(vec![]);
+
+        let send_handle = spawn_discovery_sender(&self.key, files_rx, discovery_send_socket);
 
         let recv_handle = tokio::spawn(async move {
             loop {
@@ -161,6 +150,29 @@ impl Network {
         //self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
     }
 }
+
+fn spawn_discovery_sender(key: &Key, files_rx: watch::Receiver<Vec<String>>, socket: UdpSocket) -> tokio::task::JoinHandle<()> {
+    let key = key.clone();
+    let mut files_rx = files_rx.clone();
+    tokio::spawn(async move {
+        let mut buf: Vec<u8> = vec![];
+        loop {
+            if buf.is_empty() || files_rx.has_changed().unwrap() {
+                let files = &*files_rx.borrow_and_update();
+                let packet = DiscoveryPacket {
+                    key: key.clone(),
+                    files: files.clone(),
+                };
+                buf = serde_json::to_vec(&packet).unwrap();
+            }
+            socket.send(&buf).await.unwrap();
+            let json = String::from_utf8(buf.to_vec()).unwrap();
+            info!("Sent discovery packet: {json}");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+}
+
 
 enum SendManagerMsg {
     Add(PathBuf),
