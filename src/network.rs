@@ -1,64 +1,138 @@
 mod test;
 
 use color_eyre::eyre::{ensure, eyre, ContextCompat, WrapErr};
-use color_eyre::Result;
+use color_eyre::{Report, Result};
 use const_str::{concat, ip_addr};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use lazy_static::lazy_static;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddrV4;
 use std::{
     ffi::{OsStr, OsString},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket},
+    net::Ipv4Addr,
     path::{Path, PathBuf},
-    thread::{self, JoinHandle},
     time::Duration,
 };
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
+use tokio::sync::watch;
+use tokio::task::{spawn_blocking, JoinHandle};
 use tracing::{error, info};
+
+use crate::common::Key;
 
 const IPV4_MULTICAST_ADDR: Ipv4Addr = ip_addr!(v4, "224.0.0.139");
 
-pub struct Network {
-    send_tx: Sender<SendManagerMsg>,
-    send_handle: JoinHandle<()>,
+pub fn run(key: Key, port: u16) -> NetworkHandle {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+
+    let (status_tx, status_rx) = tokio::sync::watch::channel(NetworkStatus::Starting);
+
+    let (local_file_tx, local_file_rx) = mpsc::channel(1024);
+
+    let network = Network {
+        key,
+        port,
+        status: status_tx,
+        local_files: local_file_rx,
+    };
+
+    runtime.spawn(async move {
+        if let Err(report) = network.start().await {
+            error!(?report);
+        }
+        network
+            .status
+            .send(NetworkStatus::Failed)
+            .expect("failed to send failed status");
+    });
+
+    NetworkHandle { runtime, status: status_rx, local_files: local_file_tx }
+}
+
+pub struct NetworkHandle {
+    runtime: Runtime,
+    status: watch::Receiver<NetworkStatus>,
+    local_files: mpsc::Sender<()>,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub struct RemoteFile {
+    key: Key,
+    file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DiscoveryPacket {
+    key: Key,
+    files: Vec<String>,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum NetworkStatus {
+    Starting,
+    Failed,
+    Ok(Vec<RemoteFile>),
+}
+
+struct Network {
+    key: Key,
+    port: u16,
+    status: watch::Sender<NetworkStatus>,
+    local_files: mpsc::Receiver<()>,
 }
 
 impl Network {
-    pub fn new(port: u16) -> Result<Network> {
-        let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-        let listener = TcpListener::bind(bind_addr).wrap_err("failed to bind tcp listener")?;
-        listener
-            .set_nonblocking(true)
-            .wrap_err("failed to set nonblocking")?;
-        let multicast_socket_v4 = UdpSocket::bind(bind_addr).wrap_err("failed to bind broadcast socket")?;
-        multicast_socket_v4
-            .join_multicast_v4(&IPV4_MULTICAST_ADDR, &Ipv4Addr::UNSPECIFIED)
-            .wrap_err("failed to set broadcast")?;
-        multicast_socket_v4
-            .set_read_timeout(Some(Duration::from_millis(1000)))
-            .wrap_err("failed to set read timeout")?;
-        let multicast_socket_addr_v4 = SocketAddrV4::new(IPV4_MULTICAST_ADDR, port);
-        let (send_tx, send_rx) = crossbeam_channel::unbounded();
-        let send_handle = SendManager::run(multicast_socket_v4, multicast_socket_addr_v4, send_rx, listener);
-        Ok(Network {
-            send_tx,
-            send_handle,
-        })
+    async fn start(&self) -> Result<()> {
+        let discovery_recv_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
+        let discovery_recv_socket = UdpSocket::bind(discovery_recv_addr).await?;
+        discovery_recv_socket.join_multicast_v4(IPV4_MULTICAST_ADDR, Ipv4Addr::UNSPECIFIED)?;
+
+        let discovery_send_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+        let discovery_send_socket = UdpSocket::bind(discovery_send_addr).await?;
+        discovery_send_socket
+            .connect(SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port))
+            .await?;
+
+        let key = self.key.clone();
+
+        let send_handle = tokio::spawn(async move {
+            loop {
+                let files = vec![];
+                let packet = DiscoveryPacket { key: key.clone(), files };
+                let buf = serde_json::to_vec(&packet).unwrap();
+                let result = discovery_send_socket.send(&buf).await.unwrap();
+                info!("Sent: {result}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
+        let transfer_socket = TcpListener::bind(transfer_addr).await?;
+
+        send_handle.await?;
+
+        Ok(())
     }
 
     pub fn add_send(&self, path: &Path) {
         let path = PathBuf::from(path);
-        self.send_tx
-            .send(SendManagerMsg::Add(path))
-            .wrap_err("failed to add send")
-            .unwrap();
+        /*         self.send_tx
+        .send(SendManagerMsg::Add(path))
+        .wrap_err("failed to add send")
+        .unwrap(); */
     }
 
     pub fn remove_send(&self, path: &Path) {
         let path = PathBuf::from(path);
-        self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
+        //self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
     }
 }
 
@@ -91,7 +165,7 @@ struct SendManager {
     buf: Vec<u8>,
 }
 
-impl SendManager {
+/* impl SendManager {
     fn run(
         multicast_socket_v4: UdpSocket,
         multicast_socket_addr_v4: SocketAddrV4,
@@ -169,7 +243,9 @@ impl SendManager {
         //serde_json::to_writer(writer, value)
         let serialized = serde_json::to_string(&packet).unwrap();
         let buf = serialized.as_bytes();
-        self.multicast_socket_v4.send_to(buf, self.multicast_socket_addr_v4).unwrap();
+        self.multicast_socket_v4
+            .send_to(buf, self.multicast_socket_addr_v4)
+            .unwrap();
     }
 
     fn accept(&mut self) {
@@ -214,10 +290,10 @@ impl SendManager {
         stream.write(buf)?;
         Ok(())
     }
-}
+} */
 
 struct SharyProtocolWriter {
-    buf: Vec<u8>
+    buf: Vec<u8>,
 }
 
 impl Write for SharyProtocolWriter {

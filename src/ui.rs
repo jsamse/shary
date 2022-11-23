@@ -1,10 +1,11 @@
-use crate::{network::Network, common::Key};
+use crate::{common::Key, network::{NetworkStatus, NetworkHandle}};
 
 use super::Send;
 use color_eyre::eyre::WrapErr;
 use color_eyre::Result;
 use rfd::FileDialog;
 use std::{net::UdpSocket, path::PathBuf};
+use tokio::sync::{mpsc, watch};
 use tracing::info;
 
 pub fn run(key: Key, port: u16) {
@@ -20,19 +21,17 @@ enum Action {
 }
 
 struct App {
-    initialized: Result<InitializedApp>,
+    network_handle: NetworkHandle,
+    initialized: InitializedApp,
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| -> () {
-            match self.initialized.as_mut() {
-                Ok(app) => app.draw(ui),
-                Err(report) => {
-                    ui.heading("Error:");
-                    ui.label(format!("{}", report));
-                    ui.label(format!("{}", report.root_cause()));
-                }
+            if true {
+                ui.heading("Error:");
+                //ui.label(format!("{}", report));
+                //ui.label(format!("{}", report.root_cause()));
             }
         });
     }
@@ -40,14 +39,14 @@ impl eframe::App for App {
 
 impl App {
     fn new(key: Key, port: u16) -> Self {
-        let initialized = Network::new(port).map(|network| InitializedApp {
+        let network_handle = crate::network::run(key.clone(), port);
+        let initialized = InitializedApp {
             key,
             actions: vec![],
             sends: vec![],
-            network,
-        });
+        };
 
-        Self { initialized }
+        Self { initialized, network_handle }
     }
 }
 
@@ -55,7 +54,6 @@ struct InitializedApp {
     key: Key,
     actions: Vec<Action>,
     sends: Vec<Send>,
-    network: Network,
 }
 
 impl InitializedApp {
@@ -110,14 +108,14 @@ impl InitializedApp {
             info!("Path already shared: {}", path.to_str().unwrap_or_default());
             return;
         }
-        self.network.add_send(&path);
+        //self.network.add_send(&path);
         let send = Send { path };
         self.sends.push(send);
     }
 
     fn remove_send(&mut self, path: &str) {
         let path = PathBuf::from(path);
-        self.network.remove_send(&path);
+        //self.network.remove_send(&path);
         self.sends.retain(|s| s.path != path);
     }
 }

@@ -1,7 +1,9 @@
-use std::io::Write;
+use std::{io::Write, path::PathBuf};
 
 use color_eyre::{Result, eyre::Context};
+use serde::{Serialize, Deserialize};
 
+#[derive(PartialEq, Clone, Debug, Serialize, Deserialize    )]
 pub struct Key {
     raw: String,
 }
@@ -19,4 +21,10 @@ impl Key {
     pub fn write_all_to<T: Write>(&self, w: &mut T) -> Result<()> {
         w.write_all(self.as_str().as_bytes()).wrap_err("failed to write_all")
     }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub struct LocalFile {
+    path: PathBuf,
+    name: String,
 }
