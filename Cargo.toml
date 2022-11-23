@@ -12,6 +12,7 @@ opt-level = 2 # fast and small wasm
 opt-level = 2
 
 [dependencies]
+bytes = { version = "1.3.0", features = ["serde"] }
 clap = { version = "4.0.26", features = ["derive"] }
 color-eyre = "0.6"
 const-str = { version = "0.5", features = ["std"] }

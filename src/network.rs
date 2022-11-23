@@ -1,5 +1,6 @@
 mod test;
 
+use bytes::{BufMut, BytesMut};
 use color_eyre::eyre::{ensure, eyre, ContextCompat, WrapErr};
 use color_eyre::{Report, Result};
 use const_str::{concat, ip_addr};
@@ -7,8 +8,9 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use lazy_static::lazy_static;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
+use tokio::io::Interest;
 use std::future::Future;
-use std::io::Write;
+use std::io::{Write, Read};
 use std::net::SocketAddrV4;
 use std::{
     ffi::{OsStr, OsString},
@@ -107,17 +109,27 @@ impl Network {
             loop {
                 let files = vec![];
                 let packet = DiscoveryPacket { key: key.clone(), files };
-                let buf = serde_json::to_vec(&packet).unwrap();
-                let result = discovery_send_socket.send(&buf).await.unwrap();
-                info!("Sent: {result}");
+                let buf = serde_json::to_string(&packet).unwrap();
+                discovery_send_socket.send(buf.as_bytes()).await.unwrap();
+                info!("Sent: {buf}");
                 tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        let recv_handle = tokio::spawn(async move {
+            loop {
+                let mut buf = BytesMut::with_capacity(4096);
+                discovery_recv_socket.readable().await.unwrap();
+                let (_, addr) = discovery_recv_socket.try_recv_buf_from(&mut buf).unwrap();
+                let data = String::from_utf8(buf.to_vec()).unwrap();
+                info!("Received from {addr}: {data}");
             }
         });
 
         let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
         let transfer_socket = TcpListener::bind(transfer_addr).await?;
 
-        send_handle.await?;
+        tokio::try_join!(send_handle, recv_handle)?;
 
         Ok(())
     }
