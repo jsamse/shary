@@ -1,14 +1,13 @@
 use super::Send;
-use crate::{common::Key, network::NetworkHandle};
+use crate::network::NetworkHandle;
 use rfd::FileDialog;
 use std::path::PathBuf;
 use tracing::info;
 
-pub fn run(key: Key, port: u16) {
+pub fn run(port: u16) {
     let options = eframe::NativeOptions::default();
-    let name = format!("Shary {}", key.as_str());
-    let app = App::new(key, port);
-    eframe::run_native(&name, options, Box::new(|_cc| Box::new(app)));
+    let app = App::new(port);
+    eframe::run_native(&"Shary", options, Box::new(|_cc| Box::new(app)));
 }
 
 enum Action {
@@ -34,10 +33,9 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn new(key: Key, port: u16) -> Self {
-        let network_handle = crate::network::run(key.clone(), port);
+    fn new(port: u16) -> Self {
+        let network_handle = crate::network::run(port);
         let initialized = InitializedApp {
-            key,
             actions: vec![],
             sends: vec![],
         };
@@ -50,7 +48,6 @@ impl App {
 }
 
 struct InitializedApp {
-    key: Key,
     actions: Vec<Action>,
     sends: Vec<Send>,
 }

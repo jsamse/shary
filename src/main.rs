@@ -10,8 +10,6 @@ use color_eyre::Result;
 use std::path::PathBuf;
 use tracing::{event, Level};
 
-use crate::common::Key;
-
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(short, long, default_value_t = 17671)]
@@ -22,8 +20,7 @@ fn main() -> Result<()> {
     logging::initialize()?;
     let args = Args::parse();
     event!(Level::INFO, ?args);
-    let key = Key::new();
-    ui::run(key, args.port);
+    ui::run(args.port);
     Ok(())
 }
 

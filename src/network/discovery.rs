@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, time::Duration};
 
+use crate::common::LocalFile;
 use bytes::{Buf, BytesMut};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -9,30 +10,25 @@ use tokio::{
 };
 use tracing::debug;
 
-use crate::common::Key;
-
 #[derive(Debug)]
 pub struct RemoteFiles {
-    pub key: Key,
     pub files: Vec<String>,
     pub addr: SocketAddr,
 }
 
 pub fn spawn_discovery_sender(
-    key: &Key,
-    files_rx: &watch::Receiver<Vec<String>>,
+    files_rx: &watch::Receiver<Vec<LocalFile>>,
     socket: UdpSocket,
 ) -> JoinHandle<()> {
-    let key = key.clone();
     let mut files_rx = files_rx.clone();
     tokio::spawn(async move {
         let mut buf: Vec<u8> = vec![];
         loop {
             if buf.is_empty() || files_rx.has_changed().unwrap() {
-                let files = &*files_rx.borrow_and_update();
+                let local_files = &*files_rx.borrow_and_update();
+                let files: Vec<String> = local_files.iter().map(|l| l.name.clone()).collect();
                 let packet = Packet {
-                    key: key.clone(),
-                    files: files.clone(),
+                    files,
                 };
                 buf = serde_json::to_vec(&packet).unwrap();
             }
@@ -69,7 +65,6 @@ pub fn spawn_discovery_receiver(
                 Some(packet) => {
                     debug!("Received from {addr}: {:?}", packet);
                     let remote_files = RemoteFiles {
-                        key: packet.key,
                         files: packet.files,
                         addr,
                     };
@@ -82,6 +77,5 @@ pub fn spawn_discovery_receiver(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Packet {
-    key: Key,
     files: Vec<String>,
 }

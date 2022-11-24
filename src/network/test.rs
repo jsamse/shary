@@ -1,9 +1,9 @@
 #[cfg(test)]
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::net::Ipv6Addr;
+use std::{net::Ipv6Addr, path::PathBuf};
 use const_str::ip_addr;
 use tokio::{net::UdpSocket, sync::{watch, mpsc}};
-use crate::{common::Key, network::discovery::{spawn_discovery_sender, spawn_discovery_receiver}};
+use crate::{common::{Key, LocalFile}, network::discovery::{spawn_discovery_sender, spawn_discovery_receiver}};
 
 #[tokio::test]
 async fn broadcast_is_received() {
@@ -101,7 +101,16 @@ async fn discovery() {
 
     let key = Key::new();
 
-    let (local_files_tx, local_files_rx) = watch::channel(vec![String::from("test1"), String::from("test2")]);
+    let (local_files_tx, local_files_rx) = watch::channel(vec![
+        LocalFile {
+            path: PathBuf::new(),
+            name: String::from("test1"),
+        },
+        LocalFile {
+            path: PathBuf::new(),
+            name: String::from("test2"),
+        },
+    ]);
 
     spawn_discovery_sender(&key, &local_files_rx, send_socket);
 
