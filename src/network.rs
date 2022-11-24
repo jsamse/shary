@@ -8,6 +8,7 @@ use color_eyre::Result;
 use const_str::ip_addr;
 use std::collections::HashMap;
 use std::net::SocketAddrV4;
+use std::sync::Arc;
 use std::{
     net::Ipv4Addr,
     path::{Path, PathBuf},
@@ -32,7 +33,7 @@ pub fn run(port: u16) -> NetworkHandle {
 
     let network = Network {
         port,
-        status: status_tx,
+        status: Arc::new(status_tx),
         local_files: local_file_rx,
     };
 
@@ -63,12 +64,12 @@ pub struct NetworkHandle {
 pub enum NetworkStatus {
     Starting,
     Failed,
-    Ok(Vec<RemoteFile>),
+    Ok(Arc<Vec<RemoteFile>>),
 }
 
 struct Network {
     port: u16,
-    status: watch::Sender<NetworkStatus>,
+    status: Arc<watch::Sender<NetworkStatus>>,
     local_files: watch::Receiver<Vec<LocalFile>>,
 }
 
@@ -88,27 +89,19 @@ impl Network {
 
         let send_handle = spawn_discovery_sender(&self.local_files, discovery_send_socket);
 
-        let (remote_files_tx, mut remote_files_rx) = mpsc::channel(1024);
+        let (remote_files_tx, mut remote_files_rx) = watch::channel(Arc::new(vec![]));
 
-        let recv_handle = spawn_discovery_receiver(&remote_files_tx, discovery_recv_socket);
+        let recv_handle = spawn_discovery_receiver(remote_files_tx, discovery_recv_socket);
 
         let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
         let _transfer_socket = TcpListener::bind(transfer_addr).await?;
 
+        let status = self.status.clone();
         let status_handle = tokio::spawn(async move {
-            let mut db = HashMap::new();
-            while let Some(remote_files) = remote_files_rx.recv().await {
-                db.insert(remote_files.addr, remote_files.files);
-                let files: Vec<RemoteFile> = db
-                    .iter()
-                    .flat_map(|(addr, files)| {
-                        files.iter().map(|f| RemoteFile {
-                            addr: addr.clone(),
-                            file: f.clone(),
-                        })
-                    })
-                    .collect();
-                status.send(NetworkStatus::Ok(files)).unwrap();
+            loop {
+                remote_files_rx.changed().await.unwrap();
+                let files = &*remote_files_rx.borrow_and_update();
+                status.send(NetworkStatus::Ok(files.clone())).unwrap();
             }
         });
 

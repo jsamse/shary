@@ -1,9 +1,15 @@
+use crate::{
+    common::{LocalFile, RemoteFile},
+    network::discovery::{spawn_discovery_receiver, spawn_discovery_sender},
+};
+use const_str::ip_addr;
 #[cfg(test)]
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::{net::Ipv6Addr, path::PathBuf};
-use const_str::ip_addr;
-use tokio::{net::UdpSocket, sync::{watch, mpsc}};
-use crate::{common::{Key, LocalFile}, network::discovery::{spawn_discovery_sender, spawn_discovery_receiver}};
+use std::{net::{Ipv6Addr, SocketAddr, IpAddr}, path::PathBuf, sync::Arc};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, watch},
+};
 
 #[tokio::test]
 async fn broadcast_is_received() {
@@ -93,13 +99,11 @@ async fn json_newline() {
 #[tokio::test]
 async fn discovery() {
     let recv_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 17891);
-    let recv_socket = UdpSocket::bind(recv_addr).await.unwrap();
+    let recv_socket = UdpSocket::bind(&recv_addr).await.unwrap();
 
     let send_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 17892);
-    let send_socket = UdpSocket::bind(send_addr).await.unwrap();
+    let send_socket = UdpSocket::bind(&send_addr).await.unwrap();
     send_socket.connect(("127.0.0.1", 17891)).await.unwrap();
-
-    let key = Key::new();
 
     let (local_files_tx, local_files_rx) = watch::channel(vec![
         LocalFile {
@@ -112,21 +116,33 @@ async fn discovery() {
         },
     ]);
 
-    spawn_discovery_sender(&key, &local_files_rx, send_socket);
+    spawn_discovery_sender(&local_files_rx, send_socket);
 
-    let (remote_files_tx, mut remote_files_rx) = mpsc::channel(1);
+    let (remote_files_tx, mut remote_files_rx) = watch::channel(Arc::new(vec![]));
 
-    spawn_discovery_receiver(&remote_files_tx, recv_socket);
+    spawn_discovery_receiver(remote_files_tx, recv_socket);
 
-    let remote_files = remote_files_rx.recv().await.unwrap();
+    remote_files_rx.changed().await.unwrap();
+    let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
 
-    assert_eq!(key, remote_files.key);
-    assert_eq!(vec![String::from("test1"), String::from("test2")], remote_files.files);
+    assert_eq!(
+        Arc::new(vec![
+            RemoteFile {
+                addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 17892),
+                file: String::from("test1"),
+            },
+            RemoteFile {
+                addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 17892),
+                file: String::from("test2"),
+            },
+        ]),
+        remote_files
+    );
 
     local_files_tx.send(vec![]).unwrap();
 
-    let remote_files = remote_files_rx.recv().await.unwrap();
+    remote_files_rx.changed().await.unwrap();
+    let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
 
-    assert_eq!(key, remote_files.key);
-    assert!(remote_files.files.is_empty());
+    assert!(remote_files.is_empty());
 }

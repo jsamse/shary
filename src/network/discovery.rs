@@ -1,13 +1,15 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use crate::common::LocalFile;
+use crate::common::{LocalFile, RemoteFile};
 use bytes::{Buf, BytesMut};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    net::UdpSocket,
-    sync::{mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::{net::UdpSocket, sync::watch, task::JoinHandle, time::timeout};
 use tracing::debug;
 
 #[derive(Debug)]
@@ -27,9 +29,7 @@ pub fn spawn_discovery_sender(
             if buf.is_empty() || files_rx.has_changed().unwrap() {
                 let local_files = &*files_rx.borrow_and_update();
                 let files: Vec<String> = local_files.iter().map(|l| l.name.clone()).collect();
-                let packet = Packet {
-                    files,
-                };
+                let packet = Packet { files };
                 buf = serde_json::to_vec(&packet).unwrap();
             }
             socket.send(&buf).await.unwrap();
@@ -41,15 +41,50 @@ pub fn spawn_discovery_sender(
 }
 
 pub fn spawn_discovery_receiver(
-    files_tx: &mpsc::Sender<RemoteFiles>,
+    files_tx: watch::Sender<Arc<Vec<RemoteFile>>>,
     socket: UdpSocket,
 ) -> JoinHandle<()> {
-    let files_tx = files_tx.clone();
     tokio::spawn(async move {
+        let mut db: HashMap<SocketAddr, (Vec<String>, Cell<Instant>)> = HashMap::new();
         let mut buf = BytesMut::with_capacity(4096);
+
+        fn map_remote_files(
+            db: &HashMap<SocketAddr, (Vec<String>, Cell<Instant>)>,
+        ) -> Arc<Vec<RemoteFile>> {
+            Arc::new(
+                db.iter()
+                    .flat_map(|(addr, (files, _))| {
+                        files.iter().map(|f| RemoteFile {
+                            addr: addr.clone(),
+                            file: f.clone(),
+                        })
+                    })
+                    .collect(),
+            )
+        }
+
         loop {
             buf.clear();
-            socket.readable().await.unwrap();
+            timeout(Duration::from_secs(1), socket.readable()).await.ok();
+
+            // Handle timeouts
+            let timeout_addrs: Vec<SocketAddr> = db
+                .iter()
+                .filter_map(|(addr, (_, time))| {
+                    if time.get().elapsed() > Duration::from_secs(10) {
+                        Some(addr.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for addr in timeout_addrs.iter() {
+                db.remove(addr);
+            }
+            if !timeout_addrs.is_empty() {
+                files_tx.send(map_remote_files(&db)).unwrap();
+            }
+
             let result = socket.try_recv_buf_from(&mut buf);
             if let Err(err) = &result {
                 if err.kind() == std::io::ErrorKind::WouldBlock {
@@ -64,13 +99,17 @@ pub fn spawn_discovery_receiver(
                 None => continue,
                 Some(packet) => {
                     debug!("Received from {addr}: {:?}", packet);
-                    let remote_files = RemoteFiles {
-                        files: packet.files,
-                        addr,
-                    };
-                    files_tx.send(remote_files).await.unwrap();
+                    if let Some((files, time)) = db.get(&addr) {
+                        if files == &packet.files {
+                            time.replace(Instant::now());
+                            continue;
+                        }
+                    }
+                    db.insert(addr, (packet.files, Cell::new(Instant::now())));
                 }
             }
+
+            files_tx.send(map_remote_files(&db)).unwrap();
         }
     })
 }
