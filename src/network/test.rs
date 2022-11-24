@@ -1,8 +1,9 @@
-use std::collections::HashMap;
 #[cfg(test)]
 use std::net::Ipv6Addr;
 
-use super::*;
+use crate::network::discovery::spawn_discovery_sender;
+
+use super::{*, discovery::spawn_discovery_receiver};
 
 #[tokio::test]
 async fn broadcast_is_received() {
@@ -82,7 +83,7 @@ async fn ipv6_multicast() {
 
 #[tokio::test]
 async fn json_newline() {
-    let item = HashMap::from([("filename", "test1\ntest2")]);
+    let item = std::collections::HashMap::from([("filename", "test1\ntest2")]);
 
     let json = serde_json::to_string(&item).unwrap();
 
@@ -90,7 +91,7 @@ async fn json_newline() {
 }
 
 #[tokio::test]
-async fn discovery_sender() {
+async fn discovery() {
     let recv_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 17891);
     let recv_socket = UdpSocket::bind(recv_addr).await.unwrap();
 
@@ -100,19 +101,23 @@ async fn discovery_sender() {
 
     let key = Key::new();
 
-    let (files_tx, files_rx) = watch::channel(vec![]);
+    let (local_files_tx, local_files_rx) = watch::channel(vec![String::from("test1"), String::from("test2")]);
 
-    spawn_discovery_sender(&key, files_rx, send_socket);
+    spawn_discovery_sender(&key, &local_files_rx, send_socket);
 
-    let mut buf = vec![0; 4096];
+    let (remote_files_tx, mut remote_files_rx) = mpsc::channel(1);
 
-    let (size, _) = recv_socket.recv_from(&mut buf).await.unwrap();
-    let result: DiscoveryPacket = serde_json::from_slice(&buf[..size]).unwrap();
-    assert!(result.files.is_empty());
+    spawn_discovery_receiver(&remote_files_tx, recv_socket);
 
-    files_tx.send(vec![String::from("test")]).unwrap();
+    let remote_files = remote_files_rx.recv().await.unwrap();
 
-    let (size, _) = recv_socket.recv_from(&mut buf).await.unwrap();
-    let result: DiscoveryPacket = serde_json::from_slice(&buf[..size]).unwrap();
-    assert_eq!(vec![String::from("test")], result.files);
+    assert_eq!(key, remote_files.key);
+    assert_eq!(vec![String::from("test1"), String::from("test2")], remote_files.files);
+
+    local_files_tx.send(vec![]).unwrap();
+
+    let remote_files = remote_files_rx.recv().await.unwrap();
+
+    assert_eq!(key, remote_files.key);
+    assert!(remote_files.files.is_empty());
 }

@@ -1,9 +1,8 @@
 mod test;
+mod discovery;
 
-use bytes::{BufMut, BytesMut};
-use color_eyre::eyre::{ensure, eyre, ContextCompat, WrapErr};
-use color_eyre::{Report, Result};
-use const_str::{concat, ip_addr};
+use color_eyre::Result;
+use const_str::ip_addr;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use lazy_static::lazy_static;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
@@ -26,6 +25,8 @@ use tokio::task::{spawn_blocking, JoinHandle};
 use tracing::{error, info};
 
 use crate::common::Key;
+
+use self::discovery::{spawn_discovery_sender, spawn_discovery_receiver};
 
 const IPV4_MULTICAST_ADDR: Ipv4Addr = ip_addr!(v4, "224.0.0.139");
 
@@ -75,11 +76,6 @@ pub struct RemoteFile {
     file: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DiscoveryPacket {
-    key: Key,
-    files: Vec<String>,
-}
 
 #[derive(PartialEq, Debug)]
 pub enum NetworkStatus {
@@ -111,23 +107,11 @@ impl Network {
 
         let (_files_tx, files_rx) = watch::channel(vec![]);
 
-        let send_handle = spawn_discovery_sender(&self.key, files_rx, discovery_send_socket);
+        let send_handle = spawn_discovery_sender(&self.key, &files_rx, discovery_send_socket);
 
-        let recv_handle = tokio::spawn(async move {
-            loop {
-                let mut buf = BytesMut::with_capacity(4096);
-                discovery_recv_socket.readable().await.unwrap();
-                let result = discovery_recv_socket.try_recv_buf_from(&mut buf);
-                if let Err(err) = &result {
-                    if err.kind() == std::io::ErrorKind::WouldBlock {
-                        continue;
-                    }
-                }
-                let (_, addr) = result.unwrap();
-                let data = String::from_utf8(buf.to_vec()).unwrap();
-                info!("Received from {addr}: {data}");
-            }
-        });
+        let (remote_files_tx, _remote_files_rx) = mpsc::channel(1024);
+
+        let recv_handle = spawn_discovery_receiver(&remote_files_tx, discovery_recv_socket);
 
         let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
         let transfer_socket = TcpListener::bind(transfer_addr).await?;
@@ -150,29 +134,6 @@ impl Network {
         //self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
     }
 }
-
-fn spawn_discovery_sender(key: &Key, files_rx: watch::Receiver<Vec<String>>, socket: UdpSocket) -> tokio::task::JoinHandle<()> {
-    let key = key.clone();
-    let mut files_rx = files_rx.clone();
-    tokio::spawn(async move {
-        let mut buf: Vec<u8> = vec![];
-        loop {
-            if buf.is_empty() || files_rx.has_changed().unwrap() {
-                let files = &*files_rx.borrow_and_update();
-                let packet = DiscoveryPacket {
-                    key: key.clone(),
-                    files: files.clone(),
-                };
-                buf = serde_json::to_vec(&packet).unwrap();
-            }
-            socket.send(&buf).await.unwrap();
-            let json = String::from_utf8(buf.to_vec()).unwrap();
-            info!("Sent discovery packet: {json}");
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    })
-}
-
 
 enum SendManagerMsg {
     Add(PathBuf),
