@@ -8,7 +8,7 @@ mod ui;
 use clap::Parser;
 use color_eyre::Result;
 use std::path::PathBuf;
-use tracing::{event, field, info, instrument, Level};
+use tracing::{event, Level};
 
 use crate::common::Key;
 

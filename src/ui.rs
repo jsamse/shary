@@ -1,11 +1,7 @@
-use crate::{common::Key, network::{NetworkStatus, NetworkHandle}};
-
 use super::Send;
-use color_eyre::eyre::WrapErr;
-use color_eyre::Result;
+use crate::{common::Key, network::NetworkHandle};
 use rfd::FileDialog;
-use std::{net::UdpSocket, path::PathBuf};
-use tokio::sync::{mpsc, watch};
+use std::path::PathBuf;
 use tracing::info;
 
 pub fn run(key: Key, port: u16) {
@@ -46,7 +42,10 @@ impl App {
             sends: vec![],
         };
 
-        Self { initialized, network_handle }
+        Self {
+            initialized,
+            network_handle,
+        }
     }
 }
 

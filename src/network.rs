@@ -1,32 +1,23 @@
-mod test;
 mod discovery;
+mod test;
 
+use self::discovery::{spawn_discovery_receiver, spawn_discovery_sender};
+use crate::common::Key;
 use color_eyre::Result;
 use const_str::ip_addr;
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
-use lazy_static::lazy_static;
-use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+use crossbeam_channel::Receiver;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::SocketAddrV4;
 use std::{
-    ffi::{OsStr, OsString},
     net::Ipv4Addr,
     path::{Path, PathBuf},
-    time::Duration,
 };
-use tokio::io::Interest;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use tokio::task::{spawn_blocking, JoinHandle};
-use tracing::{error, info};
-
-use crate::common::Key;
-
-use self::discovery::{spawn_discovery_sender, spawn_discovery_receiver};
+use tracing::error;
 
 const IPV4_MULTICAST_ADDR: Ipv4Addr = ip_addr!(v4, "224.0.0.139");
 
@@ -76,7 +67,6 @@ pub struct RemoteFile {
     file: String,
 }
 
-
 #[derive(PartialEq, Debug)]
 pub enum NetworkStatus {
     Starting,
@@ -95,6 +85,7 @@ impl Network {
     async fn start(&self) -> Result<()> {
         let discovery_recv_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
         let discovery_recv_socket = UdpSocket::bind(discovery_recv_addr).await?;
+        discovery_recv_socket.set_multicast_loop_v4(false)?;
         discovery_recv_socket.join_multicast_v4(IPV4_MULTICAST_ADDR, Ipv4Addr::UNSPECIFIED)?;
 
         let discovery_send_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
@@ -103,7 +94,6 @@ impl Network {
         discovery_send_socket
             .connect(SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port))
             .await?;
-
 
         let (_files_tx, files_rx) = watch::channel(vec![]);
 
@@ -114,7 +104,7 @@ impl Network {
         let recv_handle = spawn_discovery_receiver(&remote_files_tx, discovery_recv_socket);
 
         let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
-        let transfer_socket = TcpListener::bind(transfer_addr).await?;
+        let _transfer_socket = TcpListener::bind(transfer_addr).await?;
 
         tokio::try_join!(send_handle, recv_handle)?;
 
@@ -122,7 +112,7 @@ impl Network {
     }
 
     pub fn add_send(&self, path: &Path) {
-        let path = PathBuf::from(path);
+        let _path = PathBuf::from(path);
         /*         self.send_tx
         .send(SendManagerMsg::Add(path))
         .wrap_err("failed to add send")
@@ -130,7 +120,7 @@ impl Network {
     }
 
     pub fn remove_send(&self, path: &Path) {
-        let path = PathBuf::from(path);
+        let _path = PathBuf::from(path);
         //self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
     }
 }

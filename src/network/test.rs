@@ -1,9 +1,9 @@
 #[cfg(test)]
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::net::Ipv6Addr;
-
-use crate::network::discovery::spawn_discovery_sender;
-
-use super::{*, discovery::spawn_discovery_receiver};
+use const_str::ip_addr;
+use tokio::{net::UdpSocket, sync::{watch, mpsc}};
+use crate::{common::Key, network::discovery::{spawn_discovery_sender, spawn_discovery_receiver}};
 
 #[tokio::test]
 async fn broadcast_is_received() {
