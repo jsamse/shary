@@ -19,7 +19,7 @@ pub struct RemoteFiles {
 }
 
 pub fn spawn_discovery_sender(
-    files_rx: &watch::Receiver<Vec<LocalFile>>,
+    files_rx: &watch::Receiver<Arc<Vec<LocalFile>>>,
     socket: UdpSocket,
 ) -> JoinHandle<()> {
     let mut files_rx = files_rx.clone();

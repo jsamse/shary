@@ -29,7 +29,7 @@ pub fn run(port: u16) -> NetworkHandle {
 
     let (status_tx, status_rx) = tokio::sync::watch::channel(NetworkStatus::Starting);
 
-    let (local_file_tx, local_file_rx) = watch::channel(vec![]);
+    let (local_file_tx, local_file_rx) = watch::channel(Arc::new(vec![]));
 
     let network = Network {
         port,
@@ -57,7 +57,7 @@ pub fn run(port: u16) -> NetworkHandle {
 pub struct NetworkHandle {
     pub runtime: Runtime,
     pub status: watch::Receiver<NetworkStatus>,
-    pub local_files: watch::Sender<Vec<LocalFile>>,
+    pub local_files: watch::Sender<Arc<Vec<LocalFile>>>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -70,7 +70,7 @@ pub enum NetworkStatus {
 struct Network {
     port: u16,
     status: Arc<watch::Sender<NetworkStatus>>,
-    local_files: watch::Receiver<Vec<LocalFile>>,
+    local_files: watch::Receiver<Arc<Vec<LocalFile>>>,
 }
 
 impl Network {
@@ -96,10 +96,10 @@ impl Network {
         let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
         let _transfer_socket = TcpListener::bind(transfer_addr).await?;
 
+        self.status.send(NetworkStatus::Ok(Arc::new(vec![]))).unwrap();
         let status = self.status.clone();
         let status_handle = tokio::spawn(async move {
-            loop {
-                remote_files_rx.changed().await.unwrap();
+            while let Ok(_) = remote_files_rx.changed().await {
                 let files = &*remote_files_rx.borrow_and_update();
                 status.send(NetworkStatus::Ok(files.clone())).unwrap();
             }

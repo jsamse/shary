@@ -105,7 +105,7 @@ async fn discovery() {
     let send_socket = UdpSocket::bind(&send_addr).await.unwrap();
     send_socket.connect(("127.0.0.1", 17891)).await.unwrap();
 
-    let (local_files_tx, local_files_rx) = watch::channel(vec![
+    let (local_files_tx, local_files_rx) = watch::channel(Arc::new(vec![
         LocalFile {
             path: PathBuf::new(),
             name: String::from("test1"),
@@ -114,7 +114,7 @@ async fn discovery() {
             path: PathBuf::new(),
             name: String::from("test2"),
         },
-    ]);
+    ]));
 
     spawn_discovery_sender(&local_files_rx, send_socket);
 
@@ -139,7 +139,7 @@ async fn discovery() {
         remote_files
     );
 
-    local_files_tx.send(vec![]).unwrap();
+    local_files_tx.send(Arc::new(vec![])).unwrap();
 
     remote_files_rx.changed().await.unwrap();
     let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
