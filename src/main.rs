@@ -7,7 +7,6 @@ mod ui;
 
 use clap::Parser;
 use color_eyre::Result;
-use std::path::PathBuf;
 use tracing::{event, Level};
 
 #[derive(Parser, Debug)]
@@ -23,14 +22,4 @@ fn main() -> Result<()> {
     let network_handle = network::run(args.port);
     ui::run(network_handle);
     Ok(())
-}
-
-struct Send {
-    path: PathBuf,
-}
-
-impl Send {
-    fn name(&self) -> &str {
-        return self.path.to_str().unwrap_or_default();
-    }
 }

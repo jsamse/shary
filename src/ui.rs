@@ -1,11 +1,9 @@
-use super::Send;
 use crate::{
     common::{LocalFile, RemoteFile},
     network::NetworkHandle,
 };
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
-use tracing::info;
 
 pub fn run(network_handle: NetworkHandle) {
     let options = eframe::NativeOptions::default();

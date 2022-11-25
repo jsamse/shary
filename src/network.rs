@@ -6,16 +6,11 @@ use self::discovery::{spawn_discovery_receiver, spawn_discovery_sender};
 use crate::common::{LocalFile, RemoteFile};
 use color_eyre::Result;
 use const_str::ip_addr;
-use std::collections::HashMap;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
-use std::{
-    net::Ipv4Addr,
-    path::{Path, PathBuf},
-};
+use std::net::Ipv4Addr;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tracing::error;
 
@@ -108,18 +103,5 @@ impl Network {
         tokio::try_join!(send_handle, recv_handle, status_handle)?;
 
         Ok(())
-    }
-
-    pub fn add_send(&self, path: &Path) {
-        let _path = PathBuf::from(path);
-        /*         self.send_tx
-        .send(SendManagerMsg::Add(path))
-        .wrap_err("failed to add send")
-        .unwrap(); */
-    }
-
-    pub fn remove_send(&self, path: &Path) {
-        let _path = PathBuf::from(path);
-        //self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
     }
 }
