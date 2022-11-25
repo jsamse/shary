@@ -60,7 +60,7 @@ pub struct NetworkHandle {
     pub local_files: watch::Sender<Arc<Vec<LocalFile>>>,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum NetworkStatus {
     Starting,
     Failed,

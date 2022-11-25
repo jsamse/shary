@@ -20,7 +20,8 @@ fn main() -> Result<()> {
     logging::initialize()?;
     let args = Args::parse();
     event!(Level::INFO, ?args);
-    ui::run(args.port);
+    let network_handle = network::run(args.port);
+    ui::run(network_handle);
     Ok(())
 }
 

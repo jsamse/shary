@@ -1,12 +1,12 @@
 use super::Send;
-use crate::network::NetworkHandle;
+use crate::{network::NetworkHandle, common::{RemoteFile, LocalFile}};
 use rfd::FileDialog;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
-pub fn run(port: u16) {
+pub fn run(network_handle: NetworkHandle) {
     let options = eframe::NativeOptions::default();
-    let app = App::new(port);
+    let app = App { network_handle, local_files: vec![] };
     eframe::run_native(&"Shary", options, Box::new(|_cc| Box::new(app)));
 }
 
@@ -17,32 +17,66 @@ enum Action {
 
 struct App {
     network_handle: NetworkHandle,
-    initialized: InitializedApp,
+    local_files: Vec<LocalFile>,
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| -> () {
-            if true {
-                ui.heading("Error:");
-                //ui.label(format!("{}", report));
-                //ui.label(format!("{}", report.root_cause()));
+            let status = self.network_handle.status.borrow().clone();
+            match status {
+                crate::network::NetworkStatus::Starting => {
+                    ui.spinner();
+                },
+                crate::network::NetworkStatus::Failed => {
+                    ui.heading("Error. Check logs.");
+                },
+                crate::network::NetworkStatus::Ok(remote_files) => {
+                    let actions = self.draw(ui, remote_files);
+                    let updated = actions.into_iter()
+                        .map(|a| self.handle_action(a))
+                        .any(|a| a);
+                    if !updated {
+                        return;
+                    }
+                    let local_files = Arc::new(self.local_files.clone());
+                    self.network_handle.local_files.send(local_files).unwrap();
+                },
             }
         });
     }
 }
 
 impl App {
-    fn new(port: u16) -> Self {
-        let network_handle = crate::network::run(port);
-        let initialized = InitializedApp {
-            actions: vec![],
-            sends: vec![],
-        };
+    fn draw(&mut self, ui: &mut egui::Ui, remote_files: Arc<Vec<RemoteFile>>) -> Vec<Action> {
+        vec![]
+    }
 
-        Self {
-            initialized,
-            network_handle,
+    fn handle_action(&mut self, action: Action) -> bool {
+        match action {
+            Action::AddSend(path) => {
+                let name = path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| Some(String::from(name)));
+                let name = match name {
+                    Some(name) => name,
+                    None => return false,
+                };
+                if self.local_files.iter().any(|f| f.name == name) {
+                    return false;
+                }
+                self.local_files.push(LocalFile { path, name });
+                true
+            },
+            Action::RemoveSend(name) => {
+                for i in 0..self.local_files.len() {
+                    if self.local_files[i].name == name {
+                        self.local_files.remove(i);
+                        return true;
+                    }
+                }
+                false
+            },
         }
     }
 }
