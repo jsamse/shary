@@ -1,18 +1,25 @@
 use super::Send;
-use crate::{network::NetworkHandle, common::{RemoteFile, LocalFile}};
+use crate::{
+    common::{LocalFile, RemoteFile},
+    network::NetworkHandle,
+};
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
 pub fn run(network_handle: NetworkHandle) {
     let options = eframe::NativeOptions::default();
-    let app = App { network_handle, local_files: vec![] };
+    let app = App {
+        network_handle,
+        local_files: vec![],
+    };
     eframe::run_native(&"Shary", options, Box::new(|_cc| Box::new(app)));
 }
 
 enum Action {
     AddSend(PathBuf),
     RemoveSend(String),
+    Download(RemoteFile, PathBuf),
 }
 
 struct App {
@@ -27,13 +34,14 @@ impl eframe::App for App {
             match status {
                 crate::network::NetworkStatus::Starting => {
                     ui.spinner();
-                },
+                }
                 crate::network::NetworkStatus::Failed => {
                     ui.heading("Error. Check logs.");
-                },
+                }
                 crate::network::NetworkStatus::Ok(remote_files) => {
                     let actions = self.draw(ui, remote_files);
-                    let updated = actions.into_iter()
+                    let updated = actions
+                        .into_iter()
                         .map(|a| self.handle_action(a))
                         .any(|a| a);
                     if !updated {
@@ -41,7 +49,7 @@ impl eframe::App for App {
                     }
                     let local_files = Arc::new(self.local_files.clone());
                     self.network_handle.local_files.send(local_files).unwrap();
-                },
+                }
             }
         });
     }
@@ -49,13 +57,51 @@ impl eframe::App for App {
 
 impl App {
     fn draw(&mut self, ui: &mut egui::Ui, remote_files: Arc<Vec<RemoteFile>>) -> Vec<Action> {
-        vec![]
+        let mut actions = vec![];
+        ui.heading("Send");
+        if ui.button("Send file").clicked() {
+            let path = FileDialog::new().pick_file();
+            if let Some(path) = path {
+                actions.push(Action::AddSend(path));
+            }
+        }
+        if ui.button("Send folder").clicked() {
+            let path = FileDialog::new().pick_folder();
+            if let Some(path) = path {
+                actions.push(Action::AddSend(path));
+            }
+        }
+        ui.label(format!(
+            "or you can drag and drop folders or files to start sharing them"
+        ));
+        if self.local_files.len() > 0 {
+            ui.add_space(16f32);
+        }
+        for file in self.local_files.iter() {
+            if ui.button(file.name.clone()).clicked() {
+                actions.push(Action::RemoveSend(file.name.clone()));
+            }
+        }
+        ui.add_space(16f32);
+        ui.separator();
+        ui.heading("Receive");
+
+        for file in remote_files.iter() {
+            if ui.button(file.file.clone()).clicked() {
+                if let Some(path) = FileDialog::new().pick_folder() {
+                    actions.push(Action::Download(file.clone(), path));
+                }
+            }
+        }
+
+        actions
     }
 
     fn handle_action(&mut self, action: Action) -> bool {
         match action {
             Action::AddSend(path) => {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .and_then(|name| name.to_str())
                     .and_then(|name| Some(String::from(name)));
                 let name = match name {
@@ -67,7 +113,7 @@ impl App {
                 }
                 self.local_files.push(LocalFile { path, name });
                 true
-            },
+            }
             Action::RemoveSend(name) => {
                 for i in 0..self.local_files.len() {
                     if self.local_files[i].name == name {
@@ -76,76 +122,8 @@ impl App {
                     }
                 }
                 false
-            },
-        }
-    }
-}
-
-struct InitializedApp {
-    actions: Vec<Action>,
-    sends: Vec<Send>,
-}
-
-impl InitializedApp {
-    fn draw(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Send");
-        if ui.button("Send file").clicked() {
-            let path = FileDialog::new().pick_file();
-            if let Some(path) = path {
-                self.actions.push(Action::AddSend(path));
             }
+            Action::Download(_, _) => false,
         }
-        if ui.button("Send folder").clicked() {
-            let path = FileDialog::new().pick_folder();
-            if let Some(path) = path {
-                self.actions.push(Action::AddSend(path));
-            }
-        }
-        ui.label(format!(
-            "or you can drag and drop folders or files to start sharing them"
-        ));
-        if self.sends.len() > 0 {
-            ui.add_space(16f32);
-        }
-        for send in self.sends.iter() {
-            ui.collapsing(send.name(), |ui| {
-                if ui.button("Stop").clicked() {
-                    self.actions
-                        .push(Action::RemoveSend(String::from(send.name())));
-                }
-            });
-        }
-        ui.add_space(16f32);
-        ui.separator();
-        ui.heading("Receive");
-
-        self.handle_actions();
-    }
-
-    fn handle_actions(&mut self) {
-        let mut popped = self.actions.pop();
-        while let Some(action) = popped {
-            match action {
-                Action::AddSend(path) => self.add_send(path),
-                Action::RemoveSend(path) => self.remove_send(&path),
-            }
-            popped = self.actions.pop();
-        }
-    }
-
-    fn add_send(&mut self, path: PathBuf) {
-        if self.sends.iter().any(|s| s.path == path) {
-            info!("Path already shared: {}", path.to_str().unwrap_or_default());
-            return;
-        }
-        //self.network.add_send(&path);
-        let send = Send { path };
-        self.sends.push(send);
-    }
-
-    fn remove_send(&mut self, path: &str) {
-        let path = PathBuf::from(path);
-        //self.network.remove_send(&path);
-        self.sends.retain(|s| s.path != path);
     }
 }
