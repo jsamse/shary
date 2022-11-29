@@ -1,14 +1,14 @@
 use crate::{
     common::{LocalFile, RemoteFile},
-    network::NetworkHandle,
+    network::Network,
 };
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
 
-pub fn run(network_handle: NetworkHandle) {
+pub fn run(network: Arc<Network>) {
     let options = eframe::NativeOptions::default();
     let app = App {
-        network_handle,
+        network,
         local_files: vec![],
     };
     eframe::run_native(&"Shary", options, Box::new(|_cc| Box::new(app)));
@@ -21,34 +21,24 @@ enum Action {
 }
 
 struct App {
-    network_handle: NetworkHandle,
+    network: Arc<Network>,
     local_files: Vec<LocalFile>,
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| -> () {
-            let status = self.network_handle.status.borrow().clone();
-            match status {
-                crate::network::NetworkStatus::Starting => {
-                    ui.spinner();
-                }
-                crate::network::NetworkStatus::Failed => {
-                    ui.heading("Error. Check logs.");
-                }
-                crate::network::NetworkStatus::Ok(remote_files) => {
-                    let actions = self.draw(ui, remote_files);
-                    let updated = actions
-                        .into_iter()
-                        .map(|a| self.handle_action(a))
-                        .any(|a| a);
-                    if !updated {
-                        return;
-                    }
-                    let local_files = Arc::new(self.local_files.clone());
-                    self.network_handle.local_files.send(local_files).unwrap();
-                }
+            let remote_files = Arc::clone(&*self.network.remote_files.borrow());
+            let actions = self.draw(ui, remote_files);
+            let updated = actions
+                .into_iter()
+                .map(|a| self.handle_action(a))
+                .any(|a| a);
+            if !updated {
+                return;
             }
+            let local_files = Arc::new(self.local_files.clone());
+            self.network.local_files.send(local_files).unwrap();
         });
     }
 }

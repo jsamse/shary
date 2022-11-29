@@ -1,4 +1,4 @@
-use std::{path::PathBuf, net::SocketAddr};
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct LocalFile {
