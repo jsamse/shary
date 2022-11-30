@@ -120,7 +120,7 @@ pub async fn run_discovery_receiver(
         let timeout_addrs: Vec<SocketAddr> = db
             .iter()
             .filter_map(|(addr, (_, time))| {
-                if time.get().elapsed() > Duration::from_secs(10) {
+                if time.get().elapsed() > Duration::from_secs(5) {
                     Some(addr.clone())
                 } else {
                     None

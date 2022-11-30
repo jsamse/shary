@@ -3,8 +3,10 @@ mod server;
 mod test;
 
 use self::discovery::{run_discovery_receiver, run_discovery_sender};
+use self::server::run_file_server;
 use crate::common::{LocalFile, RemoteFile};
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use const_str::ip_addr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
@@ -43,7 +45,17 @@ impl Network {
         let recv_handle =
             run_discovery_receiver(&self.remote_files_tx, self.port, IPV4_MULTICAST_ADDR);
 
-        tokio::try_join!(send_handle, recv_handle)?;
+        let server_handle = {
+            let port = self.port;
+            let local_files = self.local_files_rx.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    run_file_server(port, local_files)
+                }).await.wrap_err("failed to run file server blocking")?
+            }
+        };
+
+        tokio::try_join!(send_handle, recv_handle, server_handle)?;
 
         Ok(())
     }

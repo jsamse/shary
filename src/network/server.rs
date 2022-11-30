@@ -1,83 +1,62 @@
-use std::{fmt::Write, sync::Arc, net::{SocketAddrV4, Ipv4Addr}};
-
-use bytes::BytesMut;
-use color_eyre::Result;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::watch,
+use std::{
+    io::{BufRead, BufReader},
+    net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
+    sync::Arc,
 };
+
+use color_eyre::{eyre::WrapErr, Result};
+use tokio::sync::watch;
 use tracing::error;
 
 use crate::common::LocalFile;
 
-pub async fn run_file_server(
-    port: u16,
-    local_files: watch::Receiver<Arc<Vec<LocalFile>>>,
-) -> Result<()> {
+pub fn run_file_server(port: u16, local_files: watch::Receiver<Arc<Vec<LocalFile>>>) -> Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-    let socket = TcpListener::bind(addr).await?;
-    let file_server = FileServer {
-        socket,
-        local_files,
-    };
+    let socket = TcpListener::bind(addr)?;
     loop {
-        if let Err(report) = file_server.accept().await {
-            error!("file server failed: {}", report);
-        }
+        let (stream, addr) = match socket.accept() {
+            Ok(result) => result,
+            Err(err) => {
+                error!("File server failed to accept: {}", err);
+                continue;
+            }
+        };
+        tracing::info!("Client connected: {}", addr);
+        let local_files = Arc::clone(&*local_files.borrow());
+        std::thread::spawn(move || match run_connection(stream, local_files) {
+            Ok(_) => tracing::info!("Client completed: {}", addr),
+            Err(err) => tracing::error!("Client failed: {} {}", addr, err),
+        });
     }
 }
 
-struct FileServer {
-    socket: TcpListener,
-    local_files: watch::Receiver<Arc<Vec<LocalFile>>>,
-}
-
-impl FileServer {
-    async fn accept(&self) -> Result<()> {
-        loop {
-            let (stream, _) = self.socket.accept().await?;
-            let mut connection = Connection {
-                stream,
-                local_files: self.local_files.clone(),
-            };
-            tokio::spawn(async move {
-                connection.handle().await;
-            });
-        }
+fn run_connection(stream: TcpStream, local_files: Arc<Vec<LocalFile>>) -> Result<()> {
+    let mut buf_stream = BufReader::new(stream);
+    let mut filename = String::new();
+    buf_stream
+        .read_line(&mut filename)
+        .wrap_err("failed to read filename from connection")?;
+    let filename: String =
+        serde_json::from_str(&filename).wrap_err("failed to parse filename as json")?;
+    let file = local_files.iter().find(|f| f.name == filename);
+    let file = match file {
+        Some(file) => file,
+        None => return Err(color_eyre::eyre::eyre!("filename not found: {}", filename)),
+    };
+    let stream = buf_stream.into_inner();
+    let mut builder = tar::Builder::new(stream);
+    if file.path.is_dir() {
+        builder
+            .append_dir_all(filename, file.path.as_path())
+            .wrap_err("failed to write dir to tar builder")?;
+    } else {
+        let mut file = std::fs::File::open(file.path.as_path())
+            .wrap_err("failed to open file that was to be written to tar builder")?;
+        builder
+            .append_file(filename, &mut file)
+            .wrap_err("failed to write file to tar builder")?;
     }
-}
-
-struct Connection {
-    stream: TcpStream,
-    local_files: watch::Receiver<Arc<Vec<LocalFile>>>,
-}
-
-impl Connection {
-    async fn handle(&mut self) -> Result<()> {
-        let mut buf = BytesMut::with_capacity(4096);
-        loop {
-            self.stream.read_buf(&mut buf).await?;
-            if let Some(c) = buf.last() {
-                if *c == b'\n' {
-                    break;
-                }
-            }
-        }
-        let without_delimiter = (&buf[0..buf.len() - 1]).to_vec();
-        let filename = String::from_utf8(without_delimiter)?;
-        let local_files = (*self.local_files.borrow()).clone();
-        buf.clear();
-        match local_files.iter().find(|f| f.name == filename) {
-            Some(file) => {
-                buf.write_str("ok\n")?;
-                self.stream.write_all_buf(&mut buf).await?;
-            }
-            None => {
-                buf.write_str("not_found\n")?;
-                self.stream.write_all_buf(&mut buf).await?;
-            }
-        }
-        Ok(())
-    }
+    builder
+        .finish()
+        .wrap_err("failed to finish the tar builder")
 }
