@@ -13,7 +13,8 @@ use crate::common::LocalFile;
 
 pub fn run_file_download(addr: &SocketAddr, filename: &str, path: &Path) -> Result<()> {
     let mut stream = TcpStream::connect(addr).wrap_err("failed to connect")?;
-    let filename = serde_json::to_vec(filename).wrap_err("failed to serialize filename")?;
+    let mut filename = serde_json::to_vec(filename).wrap_err("failed to serialize filename")?;
+    filename.push(b'\n');
     stream.write_all(&filename).wrap_err("failed to write filename to stream")?;
     let reader = BufReader::new(stream);
     let mut archive = Archive::new(reader);
@@ -32,7 +33,7 @@ pub fn run_file_server(port: u16, local_files: watch::Receiver<Arc<Vec<LocalFile
                 continue;
             }
         };
-        tracing::info!("Client connected: {}", addr);
+        tracing::debug!("Client connected: {}", addr);
         let local_files = Arc::clone(&*local_files.borrow());
         std::thread::spawn(move || match run_connection(stream, local_files) {
             Ok(_) => tracing::info!("Client completed: {}", addr),
@@ -49,11 +50,13 @@ fn run_connection(stream: TcpStream, local_files: Arc<Vec<LocalFile>>) -> Result
         .wrap_err("failed to read filename from connection")?;
     let filename: String =
         serde_json::from_str(&filename).wrap_err("failed to parse filename as json")?;
+    tracing::debug!("Received filename request: {}", filename);
     let file = local_files.iter().find(|f| f.name == filename);
     let file = match file {
         Some(file) => file,
         None => return Err(color_eyre::eyre::eyre!("filename not found: {}", filename)),
     };
+    tracing::debug!("Found file at: {:?}", file.path.to_str());
     let stream = buf_stream.into_inner();
     let mut builder = tar::Builder::new(stream);
     if file.path.is_dir() {
@@ -67,6 +70,7 @@ fn run_connection(stream: TcpStream, local_files: Arc<Vec<LocalFile>>) -> Result
             .append_file(filename, &mut file)
             .wrap_err("failed to write file to tar builder")?;
     }
+    tracing::debug!("Finishing tar builder.");
     builder
         .finish()
         .wrap_err("failed to finish the tar builder")
