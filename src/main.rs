@@ -7,10 +7,7 @@ mod ui;
 
 use clap::Parser;
 use color_eyre::Result;
-use std::path::PathBuf;
 use tracing::{event, Level};
-
-use crate::common::Key;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -22,17 +19,9 @@ fn main() -> Result<()> {
     logging::initialize()?;
     let args = Args::parse();
     event!(Level::INFO, ?args);
-    let key = Key::new();
-    ui::run(key, args.port);
+
+    let network = network::spawn(args.port)?;
+
+    ui::run(network);
     Ok(())
-}
-
-struct Send {
-    path: PathBuf,
-}
-
-impl Send {
-    fn name(&self) -> &str {
-        return self.path.to_str().unwrap_or_default();
-    }
 }

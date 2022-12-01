@@ -1,25 +1,13 @@
-use std::path::PathBuf;
-
-use serde::{Deserialize, Serialize};
-
-#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
-pub struct Key {
-    raw: String,
-}
-
-impl Key {
-    pub fn new() -> Key {
-        let raw = random_string::generate(6, "ABCDEFGHIJKLMNOPQRSTUVXYZ");
-        Key { raw }
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.raw.as_ref()
-    }
-}
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct LocalFile {
-    path: PathBuf,
-    name: String,
+    pub path: PathBuf,
+    pub name: String,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub struct RemoteFile {
+    pub addr: SocketAddr,
+    pub file: String,
 }

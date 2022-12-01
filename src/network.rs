@@ -1,300 +1,113 @@
 mod discovery;
+mod server;
 mod test;
 
-use self::discovery::{spawn_discovery_receiver, spawn_discovery_sender};
-use crate::common::Key;
+use self::discovery::{run_discovery_receiver, run_discovery_sender};
+use self::server::{run_file_server, run_file_download};
+use crate::common::{LocalFile, RemoteFile};
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use const_str::ip_addr;
-use crossbeam_channel::Receiver;
-use serde::{Deserialize, Serialize};
-use std::io::Write;
-use std::net::SocketAddrV4;
-use std::{
-    net::Ipv4Addr,
-    path::{Path, PathBuf},
-};
-use tokio::net::{TcpListener, UdpSocket};
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
+use std::net::Ipv4Addr;
+use std::net::SocketAddrV4;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::watch;
-use tracing::error;
 
 const IPV4_MULTICAST_ADDR: Ipv4Addr = ip_addr!(v4, "224.0.0.139");
 
-pub fn run(key: Key, port: u16) -> NetworkHandle {
+pub fn spawn(port: u16) -> Result<NetworkHandle> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("failed to create tokio runtime");
+        .wrap_err("failed to create tokio runtime")?;
 
-    let (status_tx, status_rx) = tokio::sync::watch::channel(NetworkStatus::Starting);
-
-    let (local_file_tx, local_file_rx) = mpsc::channel(1024);
-
-    let network = Network {
-        key,
-        port,
-        status: status_tx,
-        local_files: local_file_rx,
-    };
-
-    runtime.spawn(async move {
-        if let Err(report) = network.start().await {
-            error!(?report);
-        }
-        network
-            .status
-            .send(NetworkStatus::Failed)
-            .expect("failed to send failed status");
-    });
-
-    NetworkHandle {
-        runtime,
-        status: status_rx,
-        local_files: local_file_tx,
+    let network = Arc::new(Network::new(port));
+    {
+        let network = Arc::clone(&network);
+        runtime.spawn(async move {
+            loop {
+                let result = network.run().await;
+                tracing::error!("Network completed with result: {:?}", result);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
     }
+    Ok(NetworkHandle { runtime, network })
 }
 
 pub struct NetworkHandle {
     runtime: Runtime,
-    status: watch::Receiver<NetworkStatus>,
-    local_files: mpsc::Sender<()>,
+    network: Arc<Network>,
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub struct RemoteFile {
-    key: Key,
-    file: String,
-}
+impl NetworkHandle {
+    pub fn remote_files(&self) -> Arc<Vec<RemoteFile>> {
+        Arc::clone(&*self.network.remote_files.borrow())
+    }
 
-#[derive(PartialEq, Debug)]
-pub enum NetworkStatus {
-    Starting,
-    Failed,
-    Ok(Vec<RemoteFile>),
+    pub fn set_local_files(&self, files: Arc<Vec<LocalFile>>) -> Result<()> {
+        self.network.local_files.send(files).wrap_err("failed to send local files")
+    }
+
+    pub fn download(&self, file: &RemoteFile, path: PathBuf) {
+        let addr = file.addr.clone();
+        let filename = file.file.clone();
+        let path = path.clone();
+        tracing::info!("Download started: {} {}", addr, filename);
+        std::thread::spawn(move || {
+            match run_file_download(&addr, &filename, path.as_path()) {
+                Ok(_) => tracing::info!("Download finished: {} {}", addr, filename),
+                Err(err) => tracing::error!("Download failed: {} {} {}", addr, filename, err),
+            }
+        });
+    }
 }
 
 struct Network {
-    key: Key,
+    pub local_files: watch::Sender<Arc<Vec<LocalFile>>>,
+    pub remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
     port: u16,
-    status: watch::Sender<NetworkStatus>,
-    local_files: mpsc::Receiver<()>,
+    local_files_rx: watch::Receiver<Arc<Vec<LocalFile>>>,
+    remote_files_tx: watch::Sender<Arc<Vec<RemoteFile>>>,
 }
 
 impl Network {
-    async fn start(&self) -> Result<()> {
-        let discovery_recv_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
-        let discovery_recv_socket = UdpSocket::bind(discovery_recv_addr).await?;
-        discovery_recv_socket.set_multicast_loop_v4(false)?;
-        discovery_recv_socket.join_multicast_v4(IPV4_MULTICAST_ADDR, Ipv4Addr::UNSPECIFIED)?;
+    fn new(port: u16) -> Network {
+        let (local_files_tx, local_files_rx) = watch::channel(Arc::new(vec![]));
+        let (remote_files_tx, remote_files_rx) = watch::channel(Arc::new(vec![]));
+        Network {
+            local_files: local_files_tx,
+            remote_files: remote_files_rx,
+            port,
+            local_files_rx,
+            remote_files_tx,
+        }
+    }
 
-        let discovery_send_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
-        let discovery_send_socket = UdpSocket::bind(discovery_send_addr).await?;
-        discovery_send_socket.set_multicast_loop_v4(false)?;
-        discovery_send_socket
-            .connect(SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port))
-            .await?;
+    async fn run(&self) -> Result<()> {
+        let send_handle = run_discovery_sender(
+            self.local_files_rx.clone(),
+            SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port),
+        );
 
-        let (_files_tx, files_rx) = watch::channel(vec![]);
+        let recv_handle =
+            run_discovery_receiver(&self.remote_files_tx, self.port, IPV4_MULTICAST_ADDR);
 
-        let send_handle = spawn_discovery_sender(&self.key, &files_rx, discovery_send_socket);
+        let server_handle = {
+            let port = self.port;
+            let local_files = self.local_files_rx.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    run_file_server(port, local_files)
+                }).await.wrap_err("failed to run file server blocking")?
+            }
+        };
 
-        let (remote_files_tx, _remote_files_rx) = mpsc::channel(1024);
-
-        let recv_handle = spawn_discovery_receiver(&remote_files_tx, discovery_recv_socket);
-
-        let transfer_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port);
-        let _transfer_socket = TcpListener::bind(transfer_addr).await?;
-
-        tokio::try_join!(send_handle, recv_handle)?;
+        tokio::try_join!(send_handle, recv_handle, server_handle)?;
 
         Ok(())
-    }
-
-    pub fn add_send(&self, path: &Path) {
-        let _path = PathBuf::from(path);
-        /*         self.send_tx
-        .send(SendManagerMsg::Add(path))
-        .wrap_err("failed to add send")
-        .unwrap(); */
-    }
-
-    pub fn remove_send(&self, path: &Path) {
-        let _path = PathBuf::from(path);
-        //self.send_tx.send(SendManagerMsg::Remove(path)).unwrap();
-    }
-}
-
-enum SendManagerMsg {
-    Add(PathBuf),
-    Remove(PathBuf),
-}
-
-struct Send {
-    path: PathBuf,
-    name: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SendPacket {
-    names: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SendRequestPacket {
-    name: String,
-}
-
-struct SendManager {
-    multicast_socket_v4: UdpSocket,
-    multicast_socket_addr_v4: SocketAddrV4,
-    sends: Vec<Send>,
-    rx: Receiver<SendManagerMsg>,
-    listener: TcpListener,
-    buf: Vec<u8>,
-}
-
-/* impl SendManager {
-    fn run(
-        multicast_socket_v4: UdpSocket,
-        multicast_socket_addr_v4: SocketAddrV4,
-        rx: Receiver<SendManagerMsg>,
-        listener: TcpListener,
-    ) -> JoinHandle<()> {
-        thread::spawn(move || {
-            let mut manager = SendManager {
-                multicast_socket_v4,
-                multicast_socket_addr_v4,
-                sends: vec![],
-                rx,
-                listener,
-                buf: vec![],
-            };
-            loop {
-                manager.update();
-            }
-        })
-    }
-
-    fn update(&mut self) {
-        match self.rx.try_recv() {
-            Err(TryRecvError::Disconnected) => panic!("disconnected"),
-            Err(TryRecvError::Empty) => (),
-            Ok(SendManagerMsg::Add(path)) => {
-                if let Err(report) = self.add(path) {
-                    info!("{report}");
-                }
-            }
-            Ok(SendManagerMsg::Remove(path)) => self.remove(path),
-        }
-        self.send_multicast();
-        self.accept();
-        thread::sleep(Duration::from_millis(1000));
-    }
-
-    fn add(&mut self, path: PathBuf) -> Result<()> {
-        let name = path
-            .file_name()
-            .wrap_err("no filename in path")?
-            .to_str()
-            .wrap_err("filename not unicode")?
-            .to_string();
-
-        for send in self.sends.iter() {
-            ensure!(send.path != path, "send with path already exists");
-            ensure!(send.name != name, "send with name already exists");
-        }
-        self.sends.push(Send { path, name });
-        Ok(())
-    }
-
-    fn remove(&mut self, path: PathBuf) {
-        for i in 0..self.sends.len() {
-            if self.sends[i].path == path {
-                self.sends.remove(i);
-                break;
-            }
-        }
-    }
-
-    fn send_multicast(&mut self) {
-        if self.sends.is_empty() {
-            return;
-        }
-        let names = self
-            .sends
-            .iter()
-            .filter_map(|s| s.path.file_name())
-            .filter_map(|s| s.to_str())
-            .map(|s| String::from(s))
-            .collect();
-        let packet = SendPacket { names };
-        //serde_json::to_writer(writer, value)
-        let serialized = serde_json::to_string(&packet).unwrap();
-        let buf = serialized.as_bytes();
-        self.multicast_socket_v4
-            .send_to(buf, self.multicast_socket_addr_v4)
-            .unwrap();
-    }
-
-    fn accept(&mut self) {
-        loop {
-            match self.listener.accept() {
-                Ok((stream, addr)) => {
-                    info!("Accepting connection from: {}", addr);
-                    self.start(stream).unwrap();
-                    /*
-                    if let Err(report) = self.start(stream) {
-                        info!("Failed to handle request: {}", report)
-                    }
-                    */
-                }
-                Err(error) => {
-                    if let std::io::ErrorKind::WouldBlock = error.kind() {
-                        break;
-                    } else {
-                        panic!("{}", error);
-                    }
-                }
-            }
-        }
-    }
-
-    fn start(&mut self, mut stream: TcpStream) -> Result<()> {
-        stream
-            .set_nonblocking(false)
-            .wrap_err("failed to set nonblocking")?;
-        //stream.set_read_timeout(Some(Duration::from_millis(10000))).wrap_err("failed to set read timeout")?;
-        let request: SendRequestPacket =
-            serde_json::from_reader(&stream).wrap_err("failed to read stream")?;
-        let path = self
-            .sends
-            .iter()
-            .find(|s| s.name == request.name)
-            .wrap_err("requested name does not exist")?
-            .path
-            .as_path();
-        info!("Starting to send {:?} to stream.", request.name);
-        let buf = "test".as_bytes();
-        stream.write(buf)?;
-        Ok(())
-    }
-} */
-
-struct SharyProtocolWriter {
-    buf: Vec<u8>,
-}
-
-impl Write for SharyProtocolWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut size: usize = 0;
-        size += self.buf.write(&buf.len().to_be_bytes())?;
-        size += self.buf.write(b"\n")?;
-        size += self.buf.write(buf)?;
-        Ok(size)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.buf.flush()
     }
 }
