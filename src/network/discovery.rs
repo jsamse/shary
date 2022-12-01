@@ -93,7 +93,7 @@ pub async fn run_discovery_receiver(
         .wrap_err("failed to join multicast")?;
 
     let mut db: HashMap<SocketAddr, (Vec<String>, Cell<Instant>)> = HashMap::new();
-    let mut buf = BytesMut::new();
+    let mut buf = BytesMut::with_capacity(4096);
 
     fn map_remote_files(
         db: &HashMap<SocketAddr, (Vec<String>, Cell<Instant>)>,
@@ -136,7 +136,7 @@ pub async fn run_discovery_receiver(
             }
         }
 
-        let addr = match socket.try_recv_buf_from(&mut buf) {
+        let mut addr = match socket.try_recv_buf_from(&mut buf) {
             Ok((_, addr)) => addr,
             Err(err) => {
                 if err.kind() != tokio::io::ErrorKind::WouldBlock {
@@ -145,6 +145,7 @@ pub async fn run_discovery_receiver(
                 continue;
             }
         };
+        addr.set_port(port);
         let mut reader = buf.reader();
         let result: Result<Packet, serde_json::Error> = serde_json::from_reader(&mut reader);
         buf = reader.into_inner();
