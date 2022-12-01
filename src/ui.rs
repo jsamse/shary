@@ -1,11 +1,11 @@
 use crate::{
     common::{LocalFile, RemoteFile},
-    network::Network,
+    network::NetworkHandle,
 };
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
 
-pub fn run(network: Arc<Network>) {
+pub fn run(network: NetworkHandle) {
     let options = eframe::NativeOptions::default();
     let app = App {
         network,
@@ -21,14 +21,14 @@ enum Action {
 }
 
 struct App {
-    network: Arc<Network>,
+    network: NetworkHandle,
     local_files: Vec<LocalFile>,
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| -> () {
-            let remote_files = Arc::clone(&*self.network.remote_files.borrow());
+            let remote_files = self.network.remote_files();
             let actions = self.draw(ui, remote_files);
             let updated = actions
                 .into_iter()
@@ -38,7 +38,7 @@ impl eframe::App for App {
                 return;
             }
             let local_files = Arc::new(self.local_files.clone());
-            self.network.local_files.send(local_files).unwrap();
+            self.network.set_local_files(local_files).unwrap();
         });
     }
 }
@@ -111,7 +111,10 @@ impl App {
                 }
                 false
             }
-            Action::Download(_, _) => false,
+            Action::Download(file, path) => {
+                self.network.download(&file, path);
+                false
+            },
         }
     }
 }

@@ -1,14 +1,25 @@
 use std::{
-    io::{BufRead, BufReader},
-    net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
-    sync::Arc,
+    io::{BufRead, BufReader, Write},
+    net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream, SocketAddr},
+    sync::Arc, path::Path,
 };
 
 use color_eyre::{eyre::WrapErr, Result};
+use tar::Archive;
 use tokio::sync::watch;
 use tracing::error;
 
 use crate::common::LocalFile;
+
+pub fn run_file_download(addr: &SocketAddr, filename: &str, path: &Path) -> Result<()> {
+    let mut stream = TcpStream::connect(addr).wrap_err("failed to connect")?;
+    let filename = serde_json::to_vec(filename).wrap_err("failed to serialize filename")?;
+    stream.write_all(&filename).wrap_err("failed to write filename to stream")?;
+    let reader = BufReader::new(stream);
+    let mut archive = Archive::new(reader);
+    archive.unpack(path).wrap_err("failed to unpack tar")?;
+    Ok(())
+}
 
 pub fn run_file_server(port: u16, local_files: watch::Receiver<Arc<Vec<LocalFile>>>) -> Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
