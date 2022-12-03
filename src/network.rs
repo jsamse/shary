@@ -57,8 +57,8 @@ impl NetworkHandle {
         let filename = file.file.clone();
         let path = path.clone();
         tracing::info!("Download started: {} {}", addr, filename);
-        std::thread::spawn(move || {
-            match run_file_download(&addr, &filename, path.as_path()) {
+        self.runtime.spawn(async move {
+            match run_file_download(&addr, &filename, path.as_path()).await {
                 Ok(_) => tracing::info!("Download finished: {} {}", addr, filename),
                 Err(err) => tracing::error!("Download failed: {} {} {}", addr, filename, err),
             }
@@ -96,15 +96,7 @@ impl Network {
         let recv_handle =
             run_discovery_receiver(&self.remote_files_tx, self.port, IPV4_MULTICAST_ADDR);
 
-        let server_handle = {
-            let port = self.port;
-            let local_files = self.local_files_rx.clone();
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    run_file_server(port, local_files)
-                }).await.wrap_err("failed to run file server blocking")?
-            }
-        };
+        let server_handle = run_file_server(self.port, self.local_files_rx.clone());
 
         tokio::try_join!(send_handle, recv_handle, server_handle)?;
 
