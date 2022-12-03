@@ -1,5 +1,6 @@
 mod discovery;
 mod server;
+#[cfg(test)]
 mod test;
 
 use self::discovery::{run_discovery_receiver, run_discovery_sender};

@@ -1,5 +1,4 @@
 use crate::network::IPV4_MULTICAST_ADDR;
-#[cfg(test)]
 use crate::{
     common::{LocalFile},
     network::discovery::{run_discovery_receiver, run_discovery_sender},
