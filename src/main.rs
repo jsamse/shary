@@ -9,6 +9,8 @@ use clap::Parser;
 use color_eyre::Result;
 use tracing::{event, Level};
 
+use crate::common::AppState;
+
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(short, long, default_value_t = 17671)]
@@ -20,8 +22,10 @@ fn main() -> Result<()> {
     let args = Args::parse();
     event!(Level::INFO, ?args);
 
-    let network = network::spawn(args.port)?;
+    let state = AppState::default();
 
-    ui::run(network);
+    let _network = network::spawn(args.port, state.clone())?;
+
+    ui::run(state);
     Ok(())
 }
