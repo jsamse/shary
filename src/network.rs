@@ -5,27 +5,25 @@ mod test;
 
 use self::discovery::{run_discovery_receiver, run_discovery_sender};
 use self::server::{run_file_server, run_file_download};
-use crate::common::{LocalFile, RemoteFile};
+use crate::common::Files;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
 use const_str::ip_addr;
 use tokio::runtime::Runtime;
 use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
 
 const IPV4_MULTICAST_ADDR: Ipv4Addr = ip_addr!(v4, "224.0.0.139");
 
-pub fn spawn(port: u16) -> Result<NetworkHandle> {
+pub fn spawn(port: u16, files: Arc<Files>) -> Result<NetworkHandle> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .wrap_err("failed to create tokio runtime")?;
 
-    let network = Arc::new(Network::new(port));
+    let network = Arc::new(Network::new(port, files));
     {
         let network = Arc::clone(&network);
         runtime.spawn(async move {
@@ -36,70 +34,41 @@ pub fn spawn(port: u16) -> Result<NetworkHandle> {
             }
         });
     }
-    Ok(NetworkHandle { runtime, network })
+    Ok(NetworkHandle { _runtime: runtime, _network: network })
 }
 
 pub struct NetworkHandle {
-    runtime: Runtime,
-    network: Arc<Network>,
-}
-
-impl NetworkHandle {
-    pub fn remote_files(&self) -> Arc<Vec<RemoteFile>> {
-        Arc::clone(&*self.network.remote_files.borrow())
-    }
-
-    pub fn set_local_files(&self, files: Arc<Vec<LocalFile>>) -> Result<()> {
-        self.network.local_files.send(files).wrap_err("failed to send local files")
-    }
-
-    pub fn download(&self, file: &RemoteFile, path: PathBuf) {
-        let addr = file.addr.clone();
-        let filename = file.file.clone();
-        let path = path.clone();
-        tracing::info!("Download started: {} {}", addr, filename);
-        self.runtime.spawn(async move {
-            match run_file_download(&addr, &filename, path.as_path()).await {
-                Ok(_) => tracing::info!("Download finished: {} {}", addr, filename),
-                Err(err) => tracing::error!("Download failed: {} {} {}", addr, filename, err),
-            }
-        });
-    }
+    _runtime: Runtime,
+    _network: Arc<Network>,
 }
 
 struct Network {
-    pub local_files: watch::Sender<Arc<Vec<LocalFile>>>,
-    pub remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
     port: u16,
-    local_files_rx: watch::Receiver<Arc<Vec<LocalFile>>>,
-    remote_files_tx: watch::Sender<Arc<Vec<RemoteFile>>>,
+    files: Arc<Files>,
 }
 
 impl Network {
-    fn new(port: u16) -> Network {
-        let (local_files_tx, local_files_rx) = watch::channel(Arc::new(vec![]));
-        let (remote_files_tx, remote_files_rx) = watch::channel(Arc::new(vec![]));
+    fn new(port: u16, files: Arc<Files>) -> Network {
         Network {
-            local_files: local_files_tx,
-            remote_files: remote_files_rx,
             port,
-            local_files_rx,
-            remote_files_tx,
+            files,
         }
     }
 
     async fn run(&self) -> Result<()> {
         let send_handle = run_discovery_sender(
-            self.local_files_rx.clone(),
+            self.files.get_local_files(),
             SocketAddrV4::new(IPV4_MULTICAST_ADDR, self.port),
         );
 
         let recv_handle =
-            run_discovery_receiver(&self.remote_files_tx, self.port, IPV4_MULTICAST_ADDR);
+            run_discovery_receiver(&self.files.remote_files_tx, self.port, IPV4_MULTICAST_ADDR);
 
-        let server_handle = run_file_server(self.port, self.local_files_rx.clone());
+        let server_handle = run_file_server(self.port, self.files.get_local_files());
 
-        tokio::try_join!(send_handle, recv_handle, server_handle)?;
+        let download_handle = run_file_download(self.files.get_downloads());
+
+        tokio::try_join!(send_handle, recv_handle, server_handle, download_handle)?;
 
         Ok(())
     }

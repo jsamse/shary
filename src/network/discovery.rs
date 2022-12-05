@@ -25,7 +25,7 @@ pub struct RemoteFiles {
 /// If nothing fails, the function will never return.
 /// If the connected sender is dropped, this function will return [Ok(())].
 pub async fn run_discovery_sender(
-    mut files_rx: watch::Receiver<Arc<Vec<LocalFile>>>,
+    mut files_rx: watch::Receiver<Vec<LocalFile>>,
     addr: SocketAddrV4,
 ) -> Result<()> {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
@@ -52,8 +52,7 @@ pub async fn run_discovery_sender(
         if update_buffer {
             tracing::debug!("Writing discovery files to send buffer.");
             buf.clear();
-            let local_files = &*files_rx.borrow_and_update();
-            let files: Vec<String> = local_files.iter().map(|l| l.name.clone()).collect();
+            let files: Vec<String> = files_rx.borrow_and_update().iter().map(|l| l.name.clone()).collect();
             let packet = Packet { files };
             let mut writer = buf.writer();
             let json_result = serde_json::to_writer(&mut writer, &packet);

@@ -1989,6 +1989,7 @@ dependencies = [
  "egui",
  "lazy_static",
  "network-interface",
+ "parking_lot",
  "random-string",
  "rfd",
  "serde",

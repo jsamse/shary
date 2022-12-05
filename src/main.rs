@@ -5,9 +5,13 @@ mod logging;
 mod network;
 mod ui;
 
+use std::sync::Arc;
+
 use clap::Parser;
 use color_eyre::Result;
 use tracing::{event, Level};
+
+use crate::common::Files;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -20,8 +24,10 @@ fn main() -> Result<()> {
     let args = Args::parse();
     event!(Level::INFO, ?args);
 
-    let network = network::spawn(args.port)?;
+    let files = Arc::new(Files::new());
 
-    ui::run(network);
+    let _network = network::spawn(args.port, files.clone())?;
+
+    ui::run(files);
     Ok(())
 }

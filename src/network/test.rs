@@ -11,7 +11,7 @@ use tokio::{
 
 #[tokio::test]
 async fn discovery() {
-    let (local_files_tx, local_files_rx) = watch::channel(Arc::new(vec![
+    let (local_files_tx, local_files_rx) = watch::channel(vec![
         LocalFile {
             path: PathBuf::new(),
             name: String::from("test1"),
@@ -20,7 +20,7 @@ async fn discovery() {
             path: PathBuf::new(),
             name: String::from("test2"),
         },
-    ]));
+    ]);
 
     tokio::spawn(async move {
         run_discovery_sender(local_files_rx, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 17891)).await.unwrap();
@@ -42,7 +42,7 @@ async fn discovery() {
     assert_eq!(Ipv4Addr::LOCALHOST, remote_files[1].addr.ip());
     assert_eq!(String::from("test2"), remote_files[1].file);
 
-    local_files_tx.send(Arc::new(vec![])).unwrap();
+    local_files_tx.send(vec![]).unwrap();
 
     remote_files_rx.changed().await.unwrap();
 
@@ -53,12 +53,12 @@ async fn discovery() {
 
 #[tokio::test]
 async fn discovery_timeout() {
-    let (local_files_tx, local_files_rx) = watch::channel(Arc::new(vec![
+    let (local_files_tx, local_files_rx) = watch::channel(vec![
         LocalFile {
             path: PathBuf::new(),
             name: String::from("test1"),
         },
-    ]));
+    ]);
 
     tokio::spawn(async move {
         run_discovery_sender(local_files_rx, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 17891)).await.unwrap();

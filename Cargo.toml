@@ -21,6 +21,7 @@ eframe = { version = "0.19.0", features = ["persistence"] }
 egui = "0.19"
 lazy_static = "1.4.0"
 network-interface = "0.1"
+parking_lot = "0.12"
 random-string = "1.0"
 rfd = "0.10"
 serde = "1.0"

@@ -1,26 +1,47 @@
 use std::{
-    net::{Ipv4Addr, SocketAddrV4, SocketAddr},
-    sync::Arc, path::Path,
+    net::{Ipv4Addr, SocketAddrV4},
+    path::{PathBuf},
 };
 
 use color_eyre::{eyre::WrapErr, Result};
-use tokio::{sync::watch, io::{AsyncBufReadExt, AsyncWriteExt}};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt},
+    sync::{broadcast, watch},
+};
 use tracing::error;
 
-use crate::common::LocalFile;
+use crate::common::{LocalFile, RemoteFile};
 
-pub async fn run_file_download(addr: &SocketAddr, filename: &str, path: &Path) -> Result<()> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.wrap_err("failed to connect")?;
-    let mut filename = serde_json::to_vec(filename).wrap_err("failed to serialize filename")?;
-    filename.push(b'\n');
-    stream.write_all(&filename).await.wrap_err("failed to write filename to stream")?;
-    let reader = tokio::io::BufReader::new(stream);
-    let mut archive = tokio_tar::Archive::new(reader);
-    archive.unpack(path).await.wrap_err("failed to unpack tar")?;
-    Ok(())
+pub async fn run_file_download(
+    mut downloads: broadcast::Receiver<(RemoteFile, PathBuf)>,
+) -> Result<()> {
+    loop {
+        let (remote_file, path) = downloads
+            .recv()
+            .await
+            .wrap_err("download channel sender closed")?;
+        let mut stream = tokio::net::TcpStream::connect(remote_file.addr)
+            .await
+            .wrap_err("failed to connect")?;
+        let mut filename = serde_json::to_vec(&remote_file.file).wrap_err("failed to serialize filename")?;
+        filename.push(b'\n');
+        stream
+            .write_all(&filename)
+            .await
+            .wrap_err("failed to write filename to stream")?;
+        let reader = tokio::io::BufReader::new(stream);
+        let mut archive = tokio_tar::Archive::new(reader);
+        archive
+            .unpack(path)
+            .await
+            .wrap_err("failed to unpack tar")?;
+    }
 }
 
-pub async fn run_file_server(port: u16, local_files: watch::Receiver<Arc<Vec<LocalFile>>>) -> Result<()> {
+pub async fn run_file_server(
+    port: u16,
+    local_files: watch::Receiver<Vec<LocalFile>>,
+) -> Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
     let socket = tokio::net::TcpListener::bind(addr).await?;
     loop {
@@ -32,16 +53,17 @@ pub async fn run_file_server(port: u16, local_files: watch::Receiver<Arc<Vec<Loc
             }
         };
         tracing::debug!("Client connected: {}", addr);
-        let local_files = Arc::clone(&*local_files.borrow());
+        let local_files = local_files.borrow().clone();
         tokio::spawn(async move {
             match run_connection(stream, local_files).await {
-            Ok(_) => tracing::info!("Client completed: {}", addr),
-            Err(err) => tracing::error!("Client failed: {} {}", addr, err),
-        }});
+                Ok(_) => tracing::info!("Client completed: {}", addr),
+                Err(err) => tracing::error!("Client failed: {} {}", addr, err),
+            }
+        });
     }
 }
 
-async fn run_connection(stream: tokio::net::TcpStream, local_files: Arc<Vec<LocalFile>>) -> Result<()> {
+async fn run_connection(stream: tokio::net::TcpStream, local_files: Vec<LocalFile>) -> Result<()> {
     let mut buf_stream = tokio::io::BufReader::new(stream);
     let mut filename = String::new();
     buf_stream

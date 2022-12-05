@@ -1,44 +1,43 @@
 use crate::{
-    common::{LocalFile, RemoteFile},
-    network::NetworkHandle,
+    common::{LocalFile, RemoteFile, Files},
 };
 use rfd::FileDialog;
+use tokio::sync::watch;
 use std::{path::PathBuf, sync::Arc};
 
-pub fn run(network: NetworkHandle) {
+pub fn run(files: Arc<Files>) {
     let options = eframe::NativeOptions::default();
+    let local_files = files.get_local_files();
+    let remote_files = files.get_remote_files();
     let app = App {
-        network,
-        local_files: vec![],
+        files,
+        local_files,
+        remote_files,
     };
     eframe::run_native(&"Shary", options, Box::new(|_cc| Box::new(app)));
 }
 
 enum Action {
     AddSend(PathBuf),
-    RemoveSend(String),
+    RemoveSend(LocalFile),
     Download(RemoteFile, PathBuf),
 }
 
 struct App {
-    network: NetworkHandle,
-    local_files: Vec<LocalFile>,
+    files: Arc<Files>,
+    local_files: watch::Receiver<Vec<LocalFile>>,
+    remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| -> () {
-            let remote_files = self.network.remote_files();
+            let remote_files = self.remote_files.borrow().clone();
             let actions = self.draw(ui, remote_files);
-            let updated = actions
+            let _updated = actions
                 .into_iter()
                 .map(|a| self.handle_action(a))
                 .any(|a| a);
-            if !updated {
-                return;
-            }
-            let local_files = Arc::new(self.local_files.clone());
-            self.network.set_local_files(local_files).unwrap();
         });
     }
 }
@@ -62,12 +61,13 @@ impl App {
         ui.label(format!(
             "or you can drag and drop folders or files to start sharing them"
         ));
-        if self.local_files.len() > 0 {
+        let local_files = self.local_files.borrow();
+        if local_files.len() > 0 {
             ui.add_space(16f32);
         }
-        for file in self.local_files.iter() {
+        for file in local_files.iter() {
             if ui.button(file.name.clone()).clicked() {
-                actions.push(Action::RemoveSend(file.name.clone()));
+                actions.push(Action::RemoveSend(file.clone()));
             }
         }
         ui.add_space(16f32);
@@ -96,23 +96,14 @@ impl App {
                     Some(name) => name,
                     None => return false,
                 };
-                if self.local_files.iter().any(|f| f.name == name) {
-                    return false;
-                }
-                self.local_files.push(LocalFile { path, name });
-                true
+                let local_file = LocalFile { path, name };
+                self.files.add_local_file(local_file)
             }
-            Action::RemoveSend(name) => {
-                for i in 0..self.local_files.len() {
-                    if self.local_files[i].name == name {
-                        self.local_files.remove(i);
-                        return true;
-                    }
-                }
-                false
+            Action::RemoveSend(local_file) => {
+                self.files.remove_local_file(&local_file)
             }
             Action::Download(file, path) => {
-                self.network.download(&file, path);
+                self.files.add_download(file, path);
                 false
             },
         }
