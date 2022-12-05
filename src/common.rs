@@ -84,3 +84,23 @@ impl Files {
         self.downloads_tx.subscribe()
     }
 }
+
+#[macro_export]
+macro_rules! some_or_continue {
+    ($e:expr) => {
+        match $e {
+            Some(v) => v,
+            None => continue,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! ok_or_continue {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(_) => continue,
+        }
+    };
+}

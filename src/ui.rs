@@ -1,5 +1,5 @@
 use crate::{
-    common::{LocalFile, RemoteFile, Files},
+    common::{LocalFile, RemoteFile, Files}, some_or_continue, ok_or_continue,
 };
 use rfd::FileDialog;
 use tokio::sync::watch;
@@ -28,24 +28,6 @@ struct App {
     files: Arc<Files>,
     local_files: watch::Receiver<Vec<LocalFile>>,
     remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
-}
-
-macro_rules! some_or_continue {
-    ($e:expr) => {
-        match $e {
-            Some(v) => v,
-            None => continue,
-        }
-    };
-}
-
-macro_rules! ok_or_continue {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(_) => continue,
-        }
-    };
 }
 
 impl eframe::App for App {
