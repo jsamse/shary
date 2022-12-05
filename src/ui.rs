@@ -6,7 +6,8 @@ use tokio::sync::watch;
 use std::{path::PathBuf, sync::Arc};
 
 pub fn run(files: Arc<Files>) {
-    let options = eframe::NativeOptions::default();
+    let mut options = eframe::NativeOptions::default();
+    options.drag_and_drop_support = true;
     let local_files = files.get_local_files();
     let remote_files = files.get_remote_files();
     let app = App {
@@ -29,8 +30,31 @@ struct App {
     remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
 }
 
+macro_rules! some_or_continue {
+    ($e:expr) => {
+        match $e {
+            Some(v) => v,
+            None => continue,
+        }
+    };
+}
+
+macro_rules! ok_or_continue {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(_) => continue,
+        }
+    };
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        for dropped_file in ctx.input().raw.dropped_files.iter() {
+            let path = some_or_continue!(dropped_file.path.clone());
+            let local_file = ok_or_continue!(LocalFile::new(path));
+            self.files.add_local_file(local_file);
+        }
         egui::CentralPanel::default().show(ctx, |ui| -> () {
             let remote_files = self.remote_files.borrow().clone();
             let actions = self.draw(ui, remote_files);
@@ -88,16 +112,10 @@ impl App {
     fn handle_action(&mut self, action: Action) -> bool {
         match action {
             Action::AddSend(path) => {
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(|name| Some(String::from(name)));
-                let name = match name {
-                    Some(name) => name,
-                    None => return false,
-                };
-                let local_file = LocalFile { path, name };
-                self.files.add_local_file(local_file)
+                match LocalFile::new(path) {
+                    Ok(local_file) => self.files.add_local_file(local_file),
+                    Err(_) => false,
+                }
             }
             Action::RemoveSend(local_file) => {
                 self.files.remove_local_file(&local_file)

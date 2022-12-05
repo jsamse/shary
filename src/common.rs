@@ -1,11 +1,21 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
-use tokio::sync::{watch, broadcast};
+use color_eyre::{Result, eyre::eyre};
+use tokio::sync::{broadcast, watch};
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct LocalFile {
     pub path: PathBuf,
     pub name: String,
+}
+
+impl LocalFile {
+    pub fn new(path: PathBuf) -> Result<LocalFile> {
+        let file_name = path.file_name().ok_or(eyre!("no filename found for path"))?;
+        let os_str = file_name.to_str().ok_or(eyre!("filename not valid utf8"))?;
+        let name = os_str.to_owned();
+        Ok(LocalFile { path, name })
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
