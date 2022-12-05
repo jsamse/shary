@@ -2,14 +2,23 @@ use crate::{
     common::{Files, LocalFile, RemoteFile},
     ok_or_continue, some_or_continue,
 };
-use egui::{InnerResponse, Ui};
+use eframe::epaint::text::TextWrapping;
+use egui::{InnerResponse, Ui, text::LayoutJob, TextFormat};
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::watch;
 
+const SIZE: egui::Vec2 = egui::Vec2 {
+    x: 384f32,
+    y: 384f32,
+};
+const GRID_COLUMNS: i32 = 3;
+
 pub fn run(files: Arc<Files>) {
     let mut options = eframe::NativeOptions::default();
     options.drag_and_drop_support = true;
+    options.min_window_size = Some(SIZE);
+    options.max_window_size = Some(SIZE);
     let local_files = files.get_local_files();
     let remote_files = files.get_remote_files();
     let app = App {
@@ -53,74 +62,79 @@ impl eframe::App for App {
 impl App {
     fn draw(&mut self, ui: &mut egui::Ui, remote_files: &[RemoteFile]) -> Vec<Action> {
         let mut actions = vec![];
-        egui::Grid::new("grid").show(ui, |ui| {
-            let mut count = 0;
-            for remote_file in remote_files.iter() {
+
+        let columns = GRID_COLUMNS as f32;
+        let spacing = ui.spacing();
+        let item_spacing = spacing.item_spacing.x * (columns - 1f32);
+        let width = (ui.available_width() - item_spacing) / columns;
+
+        egui::Grid::new("grid")
+            .min_col_width(width)
+            .max_col_width(width)
+            .show(ui, |ui| {
+                let mut count = 0;
+                for remote_file in remote_files.iter() {
+                    cell(ui, |ui| {
+                        let mut job = LayoutJob::single_section(remote_file.file.clone(), TextFormat::default());
+                        job.wrap = TextWrapping {
+                            max_rows: 3,
+                            break_anywhere: true,
+                            overflow_character: Some('…'),
+                            max_width: ui.available_width(),
+                        };
+                        ui.label(job);
+                        ui.add_space(32f32);
+                        if ui.button("Download").clicked() {
+                            let path = FileDialog::new().pick_folder();
+                            if let Some(path) = path {
+                                actions.push(Action::Download(remote_file.clone(), path))
+                            }
+                        }
+                    });
+                    count = count + 1;
+                    if count % GRID_COLUMNS == 0 {
+                        ui.end_row();
+                    }
+                }
+                let local_files = self.local_files.borrow();
+                for local_file in local_files.iter() {
+                    cell(ui, |ui| {
+                        let mut job = LayoutJob::single_section(local_file.name.clone(), TextFormat::default());
+                        job.wrap = TextWrapping {
+                            max_rows: 3,
+                            break_anywhere: true,
+                            overflow_character: Some('…'),
+                            max_width: ui.available_width(),
+                        };
+                        ui.label(job);
+                        ui.add_space(8f32);
+                        if ui.button("Stop sharing").clicked() {
+                            actions.push(Action::RemoveSend(local_file.clone()));
+                        }
+                    });
+                    count = count + 1;
+                    if count % GRID_COLUMNS == 0 {
+                        ui.end_row();
+                    }
+                }
                 cell(ui, |ui| {
-                    ui.label(remote_file.file.clone());
-                    if ui.button("Download").clicked() {
+                    ui.label("Share new");
+                    if ui.button("file").clicked() {
+                        let path = FileDialog::new().pick_file();
+                        if let Some(path) = path {
+                            actions.push(Action::AddSend(path));
+                        }
                     }
+                    ui.label("or");
+                    if ui.button("folder").clicked() {
+                        let path = FileDialog::new().pick_folder();
+                        if let Some(path) = path {
+                            actions.push(Action::AddSend(path));
+                        }
+                    }
+                    ui.label("or drag and drop");
                 });
-                count = count + 1;
-                if count % 4 == 0 {
-                    ui.end_row();
-                }
-            }
-            let local_files = self.local_files.borrow();
-            for local_file in local_files.iter() {
-                cell(ui, |ui| {
-                    ui.label(local_file.name.clone());
-                    if ui.button("Stop sharing").clicked() {
-                        actions.push(Action::RemoveSend(local_file.clone()));
-                    }
-                });
-                count = count + 1;
-                if count % 4 == 0 {
-                    ui.end_row();
-                }
-            }
-            cell(ui, |ui| {
-                ui.label("Share new");
-                if ui.button("file").clicked() {
-                    let path = FileDialog::new().pick_file();
-                    if let Some(path) = path {
-                        actions.push(Action::AddSend(path));
-                    }
-                }
-                ui.label("or");
-                if ui.button("folder").clicked() {
-                    let path = FileDialog::new().pick_folder();
-                    if let Some(path) = path {
-                        actions.push(Action::AddSend(path));
-                    }
-                }
             });
-        });
-        ui.heading("Send");
-        ui.label(format!(
-            "or you can drag and drop folders or files to start sharing them"
-        ));
-        let local_files = self.local_files.borrow();
-        if local_files.len() > 0 {
-            ui.add_space(16f32);
-        }
-        for file in local_files.iter() {
-            if ui.button(file.name.clone()).clicked() {
-                actions.push(Action::RemoveSend(file.clone()));
-            }
-        }
-        ui.add_space(16f32);
-        ui.separator();
-        ui.heading("Receive");
-
-        for file in remote_files.iter() {
-            if ui.button(file.file.clone()).clicked() {
-                if let Some(path) = FileDialog::new().pick_folder() {
-                    actions.push(Action::Download(file.clone(), path));
-                }
-            }
-        }
-
         actions
     }
 
@@ -141,8 +155,12 @@ impl App {
 
 fn cell<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     ui.group(|ui| {
-        ui.set_width(128f32);
-        ui.set_height(128f32);
-        ui.vertical_centered(|ui| add_contents(ui)).inner
+        let width = ui.available_width();
+        ui.set_width(width);
+        ui.set_height(width);
+        ui.vertical_centered(|ui| {
+            ui.set_height(ui.available_height());
+            add_contents(ui)
+        }).inner
     })
 }
