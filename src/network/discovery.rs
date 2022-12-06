@@ -92,7 +92,7 @@ pub async fn run_discovery_receiver(
         .wrap_err("failed to join multicast")?;
 
     let mut db: HashMap<SocketAddr, (Vec<String>, Cell<Instant>)> = HashMap::new();
-    let mut buf = BytesMut::with_capacity(4096);
+    let mut buf = BytesMut::with_capacity(64000);
 
     fn map_remote_files(
         db: &HashMap<SocketAddr, (Vec<String>, Cell<Instant>)>,
