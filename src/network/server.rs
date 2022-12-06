@@ -5,7 +5,7 @@ use std::{
 
 use color_eyre::{eyre::WrapErr, Result};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufWriter},
     sync::watch,
 };
 use tracing::error;
@@ -90,7 +90,8 @@ async fn run_connection(stream: tokio::net::TcpStream, local_files: Vec<LocalFil
     };
     tracing::debug!("Found file at: {:?}", file.path.to_str());
     let stream = buf_stream.into_inner();
-    let mut builder = tokio_tar::Builder::new(stream);
+    let buf_writer = BufWriter::new(stream);
+    let mut builder = tokio_tar::Builder::new(buf_writer);
     if file.path.is_dir() {
         builder
             .append_dir_all(filename, file.path.as_path())
