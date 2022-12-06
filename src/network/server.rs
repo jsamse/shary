@@ -107,8 +107,6 @@ async fn run_connection(stream: tokio::net::TcpStream, local_files: Vec<LocalFil
             .wrap_err("failed to write file to tar builder")?;
     }
     tracing::debug!("Finishing tar builder.");
-    builder
-        .finish()
-        .await
-        .wrap_err("failed to finish the tar builder")
+    let mut buf_writer = builder.into_inner().await.wrap_err("failed to finish the tar builder")?;
+    buf_writer.flush().await.wrap_err("failed to flush the buf writer")
 }
