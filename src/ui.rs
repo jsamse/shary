@@ -3,10 +3,10 @@ use crate::{
     ok_or_continue, some_or_continue,
 };
 use eframe::epaint::text::TextWrapping;
-use egui::{InnerResponse, Ui, text::LayoutJob, TextFormat};
+use egui::{text::LayoutJob, InnerResponse, TextFormat, Ui};
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
-use tokio::sync::watch;
+use tokio::{runtime::Runtime, sync::watch};
 
 const SIZE: egui::Vec2 = egui::Vec2 {
     x: 384f32,
@@ -19,14 +19,34 @@ pub fn run(files: Arc<Files>) {
     options.drag_and_drop_support = true;
     options.min_window_size = Some(SIZE);
     options.max_window_size = Some(SIZE);
-    let local_files = files.get_local_files();
-    let remote_files = files.get_remote_files();
-    let app = App {
-        files,
-        local_files,
-        remote_files,
-    };
-    eframe::run_native(&"Shary", options, Box::new(|_cc| Box::new(app)));
+    eframe::run_native(
+        &"Shary",
+        options,
+        Box::new(move |cc| {
+            let ctx = cc.egui_ctx.clone();
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("failed to create tokio runtime");
+            let mut remote_files = files.get_remote_files();
+            runtime.spawn(async move {
+                loop {
+                    let _ = remote_files.changed().await;
+                    ctx.request_repaint();
+                }
+            });
+            let local_files = files.get_local_files();
+            let remote_files = files.get_remote_files();
+            let app = App {
+                files: files.clone(),
+                local_files,
+                remote_files,
+                runtime,
+            };
+            Box::new(app)
+        }),
+    );
 }
 
 enum Action {
@@ -39,6 +59,7 @@ struct App {
     files: Arc<Files>,
     local_files: watch::Receiver<Vec<LocalFile>>,
     remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
+    runtime: Runtime,
 }
 
 impl eframe::App for App {
@@ -75,7 +96,10 @@ impl App {
                 let mut count = 0;
                 for remote_file in remote_files.iter() {
                     cell(ui, |ui| {
-                        let mut job = LayoutJob::single_section(remote_file.file.clone(), TextFormat::default());
+                        let mut job = LayoutJob::single_section(
+                            remote_file.file.clone(),
+                            TextFormat::default(),
+                        );
                         job.wrap = TextWrapping {
                             max_rows: 3,
                             break_anywhere: true,
@@ -99,7 +123,10 @@ impl App {
                 let local_files = self.local_files.borrow();
                 for local_file in local_files.iter() {
                     cell(ui, |ui| {
-                        let mut job = LayoutJob::single_section(local_file.name.clone(), TextFormat::default());
+                        let mut job = LayoutJob::single_section(
+                            local_file.name.clone(),
+                            TextFormat::default(),
+                        );
                         job.wrap = TextWrapping {
                             max_rows: 3,
                             break_anywhere: true,
@@ -161,6 +188,7 @@ fn cell<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerRespons
         ui.vertical_centered(|ui| {
             ui.set_height(ui.available_height());
             add_contents(ui)
-        }).inner
+        })
+        .inner
     })
 }
