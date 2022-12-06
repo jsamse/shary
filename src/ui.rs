@@ -42,7 +42,7 @@ pub fn run(files: Arc<Files>) {
                 files: files.clone(),
                 local_files,
                 remote_files,
-                runtime,
+                _runtime: runtime,
             };
             Box::new(app)
         }),
@@ -59,7 +59,7 @@ struct App {
     files: Arc<Files>,
     local_files: watch::Receiver<Vec<LocalFile>>,
     remote_files: watch::Receiver<Arc<Vec<RemoteFile>>>,
-    runtime: Runtime,
+    _runtime: Runtime,
 }
 
 impl eframe::App for App {
