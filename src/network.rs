@@ -66,7 +66,7 @@ impl Network {
 
         let server_handle = run_file_server(self.port, self.files.get_local_files());
 
-        let download_handle = run_file_download(self.files.get_downloads());
+        let download_handle = run_file_download(&self.files);
 
         tokio::try_join!(send_handle, recv_handle, server_handle, download_handle)?;
 

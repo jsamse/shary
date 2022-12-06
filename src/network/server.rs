@@ -1,41 +1,51 @@
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
-    path::{PathBuf},
+    path::PathBuf,
 };
 
 use color_eyre::{eyre::WrapErr, Result};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt},
-    sync::{broadcast, watch},
+    sync::watch,
 };
 use tracing::error;
 
-use crate::common::{LocalFile, RemoteFile};
+use crate::common::{Files, LocalFile, RemoteFile, DownloadStatus};
 
-pub async fn run_file_download(
-    mut downloads: broadcast::Receiver<(RemoteFile, PathBuf)>,
-) -> Result<()> {
+pub async fn run_file_download(files: &Files) -> Result<()> {
+    let mut downloads = files.get_downloads();
     loop {
         let (remote_file, path) = downloads
             .recv()
             .await
             .wrap_err("download channel sender closed")?;
-        let mut stream = tokio::net::TcpStream::connect(remote_file.addr)
-            .await
-            .wrap_err("failed to connect")?;
-        let mut filename = serde_json::to_vec(&remote_file.file).wrap_err("failed to serialize filename")?;
-        filename.push(b'\n');
-        stream
-            .write_all(&filename)
-            .await
-            .wrap_err("failed to write filename to stream")?;
-        let reader = tokio::io::BufReader::new(stream);
-        let mut archive = tokio_tar::Archive::new(reader);
-        archive
-            .unpack(path)
-            .await
-            .wrap_err("failed to unpack tar")?;
+        files.set_download_status(remote_file.clone(), Some(DownloadStatus::Running));
+        let result = download(remote_file.clone(), path).await;
+        let status = match result {
+            Ok(_) => DownloadStatus::Completed,
+            Err(report) => DownloadStatus::Failed(report.to_string()),
+        };
+        files.set_download_status(remote_file, Some(status));
     }
+}
+
+async fn download(remote_file: RemoteFile, path: PathBuf) -> Result<()> {
+    let mut stream = tokio::net::TcpStream::connect(remote_file.addr)
+        .await
+        .wrap_err("failed to connect")?;
+    let mut filename =
+        serde_json::to_vec(&remote_file.file).wrap_err("failed to serialize filename")?;
+    filename.push(b'\n');
+    stream
+        .write_all(&filename)
+        .await
+        .wrap_err("failed to write filename to stream")?;
+    let reader = tokio::io::BufReader::new(stream);
+    let mut archive = tokio_tar::Archive::new(reader);
+    archive
+        .unpack(path)
+        .await
+        .wrap_err("failed to unpack tar")
 }
 
 pub async fn run_file_server(

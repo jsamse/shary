@@ -101,19 +101,45 @@ impl App {
                             TextFormat::default(),
                         );
                         job.wrap = TextWrapping {
-                            max_rows: 3,
+                            max_rows: 2,
                             break_anywhere: true,
                             overflow_character: Some('…'),
                             max_width: ui.available_width(),
                         };
                         ui.label(job);
-                        ui.add_space(32f32);
-                        if ui.button("Download").clicked() {
-                            let path = FileDialog::new().pick_folder();
-                            if let Some(path) = path {
-                                actions.push(Action::Download(remote_file.clone(), path))
+                        ui.add_space(16f32);
+                        match self.files.get_download_status(remote_file) {
+                            Some(status) => {
+                                match status {
+                                    crate::common::DownloadStatus::Running => {
+                                        ui.spinner();
+                                    }
+                                    crate::common::DownloadStatus::Completed => {
+                                        ui.label("Download successful");
+                                        if ui.button("OK").clicked() {
+                                            self.files
+                                                .set_download_status(remote_file.clone(), None);
+                                        }
+                                    }
+                                    crate::common::DownloadStatus::Failed(msg) => {
+                                        ui.label("Download failed:");
+                                        ui.label(msg);
+                                        if ui.button("OK").clicked() {
+                                            self.files
+                                                .set_download_status(remote_file.clone(), None);
+                                        }
+                                    }
+                                };
                             }
-                        }
+                            None => {
+                                if ui.button("Download").clicked() {
+                                    let path = FileDialog::new().pick_folder();
+                                    if let Some(path) = path {
+                                        actions.push(Action::Download(remote_file.clone(), path))
+                                    }
+                                }
+                            }
+                        };
                     });
                     count = count + 1;
                     if count % GRID_COLUMNS == 0 {
@@ -128,7 +154,7 @@ impl App {
                             TextFormat::default(),
                         );
                         job.wrap = TextWrapping {
-                            max_rows: 3,
+                            max_rows: 2,
                             break_anywhere: true,
                             overflow_character: Some('…'),
                             max_width: ui.available_width(),

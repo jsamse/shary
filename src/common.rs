@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, collections::HashMap};
 
 use color_eyre::{Result, eyre::eyre};
 use tokio::sync::{broadcast, watch};
@@ -18,16 +18,24 @@ impl LocalFile {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub struct RemoteFile {
     pub addr: SocketAddr,
     pub file: String,
+}
+
+#[derive(Eq, PartialEq, Clone, Debug, Hash)]
+pub enum DownloadStatus {
+    Running,
+    Completed,
+    Failed(String),
 }
 
 pub struct Files {
     local_files_tx: watch::Sender<Vec<LocalFile>>,
     pub remote_files_tx: watch::Sender<Arc<Vec<RemoteFile>>>,
     downloads_tx: broadcast::Sender<(RemoteFile, PathBuf)>,
+    download_status_tx: watch::Sender<HashMap<RemoteFile, DownloadStatus>>,
 }
 
 impl Files {
@@ -35,10 +43,12 @@ impl Files {
         let (local_files_tx, _) = watch::channel(vec![]);
         let (remote_files_tx, _) = watch::channel(Arc::new(vec![]));
         let (downloads_tx, _) = broadcast::channel(1);
+        let (download_status_tx, _) = watch::channel(HashMap::new());
         Self {
             local_files_tx,
             remote_files_tx,
             downloads_tx,
+            download_status_tx,
         }
     }
 
@@ -82,6 +92,23 @@ impl Files {
 
     pub fn get_downloads(&self) -> broadcast::Receiver<(RemoteFile, PathBuf)> {
         self.downloads_tx.subscribe()
+    }
+
+    pub fn set_download_status(&self, remote_file: RemoteFile, status: Option<DownloadStatus>) {
+        match status {
+            Some(status) => self.download_status_tx.send_if_modified(|m| {
+                m.insert(remote_file, status);
+                true
+            }),
+            None => self.download_status_tx.send_if_modified(|m| {
+                m.remove(&remote_file);
+                true
+            }),
+        };
+    }
+
+    pub fn get_download_status(&self, remote_file: &RemoteFile) -> Option<DownloadStatus> {
+        self.download_status_tx.borrow().get(remote_file).cloned()
     }
 }
 
