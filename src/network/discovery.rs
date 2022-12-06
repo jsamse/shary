@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::common::{LocalFile, RemoteFile};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 use color_eyre::{eyre::WrapErr, Result};
 use serde::{Deserialize, Serialize};
 use tokio::{net::UdpSocket, sync::watch, time::timeout};
@@ -92,7 +92,7 @@ pub async fn run_discovery_receiver(
         .wrap_err("failed to join multicast")?;
 
     let mut db: HashMap<SocketAddr, (Vec<String>, Cell<Instant>)> = HashMap::new();
-    let mut buf = BytesMut::with_capacity(64000);
+    let mut buf = vec![0;64000];
 
     fn map_remote_files(
         db: &HashMap<SocketAddr, (Vec<String>, Cell<Instant>)>,
@@ -110,7 +110,6 @@ pub async fn run_discovery_receiver(
     }
 
     loop {
-        buf.clear();
         timeout(Duration::from_secs(1), socket.readable())
             .await
             .ok();
@@ -135,8 +134,8 @@ pub async fn run_discovery_receiver(
             }
         }
 
-        let mut addr = match socket.try_recv_buf_from(&mut buf) {
-            Ok((_, addr)) => addr,
+        let (size, mut addr) = match socket.try_recv_from(&mut buf) {
+            Ok(result) => result,
             Err(err) => {
                 if err.kind() != tokio::io::ErrorKind::WouldBlock {
                     tracing::error!("Failed to read from discovery socket: {}", err);
@@ -145,9 +144,7 @@ pub async fn run_discovery_receiver(
             }
         };
         addr.set_port(port);
-        let mut reader = buf.reader();
-        let result: Result<Packet, serde_json::Error> = serde_json::from_reader(&mut reader);
-        buf = reader.into_inner();
+        let result: Result<Packet, serde_json::Error> = serde_json::from_slice(&mut buf[0..size]);
         match result {
             Err(err) => {
                 tracing::error!("Failed to parse discovery json: {}", err);
