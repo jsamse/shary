@@ -11,6 +11,7 @@ use tokio::{
 
 #[tokio::test]
 async fn discovery() {
+    let port = 17891;
     let (local_files_tx, local_files_rx) = watch::channel(vec![
         LocalFile {
             path: PathBuf::new(),
@@ -23,13 +24,13 @@ async fn discovery() {
     ]);
 
     tokio::spawn(async move {
-        run_discovery_sender(local_files_rx, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 17891)).await.unwrap();
+        run_discovery_sender(local_files_rx, SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).await.unwrap();
     });
 
     let (remote_files_tx, mut remote_files_rx) = watch::channel(Arc::new(vec![]));
 
     tokio::spawn(async move {
-        run_discovery_receiver(&remote_files_tx, 17891, IPV4_MULTICAST_ADDR).await.unwrap();
+        run_discovery_receiver(&remote_files_tx, port, IPV4_MULTICAST_ADDR).await.unwrap();
     });
 
     remote_files_rx.changed().await.unwrap();
@@ -53,6 +54,7 @@ async fn discovery() {
 
 #[tokio::test]
 async fn discovery_timeout() {
+    let port = 17892;
     let (local_files_tx, local_files_rx) = watch::channel(vec![
         LocalFile {
             path: PathBuf::new(),
@@ -61,13 +63,13 @@ async fn discovery_timeout() {
     ]);
 
     tokio::spawn(async move {
-        run_discovery_sender(local_files_rx, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 17891)).await.unwrap();
+        run_discovery_sender(local_files_rx, SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).await.unwrap();
     });
 
     let (remote_files_tx, mut remote_files_rx) = watch::channel(Arc::new(vec![]));
 
     tokio::spawn(async move {
-        run_discovery_receiver(&remote_files_tx, 17891, IPV4_MULTICAST_ADDR).await.unwrap();
+        run_discovery_receiver(&remote_files_tx, port, IPV4_MULTICAST_ADDR).await.unwrap();
     });
 
     remote_files_rx.changed().await.unwrap();

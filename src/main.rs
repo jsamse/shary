@@ -1,17 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod common;
-mod logging;
-mod network;
-mod ui;
-
 use std::sync::Arc;
 
 use clap::Parser;
 use color_eyre::Result;
 use tracing::{event, Level};
 
-use crate::common::Files;
+use shary::{common::Files, ui, network, logging};
 
 #[derive(Parser, Debug)]
 struct Args {
