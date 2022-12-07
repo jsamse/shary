@@ -101,7 +101,7 @@ pub async fn run_discovery_receiver(
             db.iter()
                 .flat_map(|(addr, (files, _))| {
                     files.iter().map(|f| RemoteFile {
-                        addr: addr.clone(),
+                        addr: *addr,
                         file: f.clone(),
                     })
                 })
@@ -119,7 +119,7 @@ pub async fn run_discovery_receiver(
             .iter()
             .filter_map(|(addr, (_, time))| {
                 if time.get().elapsed() > Duration::from_secs(5) {
-                    Some(addr.clone())
+                    Some(*addr)
                 } else {
                     None
                 }
@@ -128,10 +128,8 @@ pub async fn run_discovery_receiver(
         for addr in timeout_addrs.iter() {
             db.remove(addr);
         }
-        if !timeout_addrs.is_empty() {
-            if let Err(_) = files_tx.send(map_remote_files(&db)) {
-                return Ok(());
-            }
+        if !timeout_addrs.is_empty() && files_tx.send(map_remote_files(&db)).is_err() {
+            return Ok(());
         }
 
         let (size, mut addr) = match socket.try_recv_from(&mut buf) {
@@ -144,7 +142,7 @@ pub async fn run_discovery_receiver(
             }
         };
         addr.set_port(port);
-        let result: Result<Packet, serde_json::Error> = serde_json::from_slice(&mut buf[0..size]);
+        let result: Result<Packet, serde_json::Error> = serde_json::from_slice(&buf[0..size]);
         match result {
             Err(err) => {
                 tracing::error!("Failed to parse discovery json: {}", err);
@@ -162,7 +160,7 @@ pub async fn run_discovery_receiver(
             }
         }
 
-        if let Err(_) = files_tx.send(map_remote_files(&db)) {
+        if files_tx.send(map_remote_files(&db)).is_err() {
             return Ok(());
         }
     }

@@ -35,7 +35,7 @@ async fn discovery() {
 
     remote_files_rx.changed().await.unwrap();
 
-    let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
+    let remote_files = (*remote_files_rx.borrow_and_update()).clone();
 
     assert_eq!(2, remote_files.len());
     assert_eq!(Ipv4Addr::LOCALHOST, remote_files[0].addr.ip());
@@ -47,7 +47,7 @@ async fn discovery() {
 
     remote_files_rx.changed().await.unwrap();
 
-    let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
+    let remote_files = (*remote_files_rx.borrow_and_update()).clone();
 
     assert!(remote_files.is_empty());
 }
@@ -74,7 +74,7 @@ async fn discovery_timeout() {
 
     remote_files_rx.changed().await.unwrap();
 
-    let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
+    let remote_files = (*remote_files_rx.borrow_and_update()).clone();
 
     assert_eq!(1, remote_files.len());
     assert_eq!(Ipv4Addr::LOCALHOST, remote_files[0].addr.ip());
@@ -86,7 +86,7 @@ async fn discovery_timeout() {
 
     assert!(remote_files_rx.has_changed().unwrap());
 
-    let remote_files = (&*remote_files_rx.borrow_and_update()).clone();
+    let remote_files = (*remote_files_rx.borrow_and_update()).clone();
 
     assert!(remote_files.is_empty());
 }

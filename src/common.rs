@@ -38,8 +38,8 @@ pub struct Files {
     download_status_tx: watch::Sender<HashMap<RemoteFile, DownloadStatus>>,
 }
 
-impl Files {
-    pub fn new() -> Files {
+impl Default for Files {
+    fn default() -> Self {
         let (local_files_tx, _) = watch::channel(vec![]);
         let (remote_files_tx, _) = watch::channel(Arc::new(vec![]));
         let (downloads_tx, _) = broadcast::channel(1);
@@ -51,7 +51,9 @@ impl Files {
             download_status_tx,
         }
     }
+}
 
+impl Files {
     pub fn add_local_file(&self, local_file: LocalFile) -> bool {
         self.local_files_tx.send_if_modified(|local_files| {
             if local_files.contains(&local_file) {

@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     event!(Level::INFO, ?args);
 
-    let files = Arc::new(Files::new());
+    let files = Arc::new(Files::default());
 
     let _network = network::spawn(args.port, files.clone())?;
 

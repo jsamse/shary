@@ -15,12 +15,14 @@ const SIZE: egui::Vec2 = egui::Vec2 {
 const GRID_COLUMNS: i32 = 3;
 
 pub fn run(files: Arc<Files>) {
-    let mut options = eframe::NativeOptions::default();
-    options.drag_and_drop_support = true;
-    options.min_window_size = Some(SIZE);
-    options.max_window_size = Some(SIZE);
+    let options = eframe::NativeOptions {
+        drag_and_drop_support: true,
+        min_window_size: Some(SIZE),
+        max_window_size: Some(SIZE),
+        ..Default::default()
+    };
     eframe::run_native(
-        &"Shary",
+        "Shary",
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();
@@ -39,7 +41,7 @@ pub fn run(files: Arc<Files>) {
             let local_files = files.get_local_files();
             let remote_files = files.get_remote_files();
             let app = App {
-                files: files.clone(),
+                files,
                 local_files,
                 remote_files,
                 _runtime: runtime,
@@ -69,7 +71,7 @@ impl eframe::App for App {
             let local_file = ok_or_continue!(LocalFile::new(path));
             self.files.add_local_file(local_file);
         }
-        egui::CentralPanel::default().show(ctx, |ui| -> () {
+        egui::CentralPanel::default().show(ctx, |ui| {
             let remote_files = self.remote_files.borrow().clone();
             let actions = self.draw(ui, &remote_files);
             let _updated = actions
@@ -141,7 +143,7 @@ impl App {
                             }
                         };
                     });
-                    count = count + 1;
+                    count += 1;
                     if count % GRID_COLUMNS == 0 {
                         ui.end_row();
                     }
@@ -165,7 +167,7 @@ impl App {
                             actions.push(Action::RemoveSend(local_file.clone()));
                         }
                     });
-                    count = count + 1;
+                    count += 1;
                     if count % GRID_COLUMNS == 0 {
                         ui.end_row();
                     }
